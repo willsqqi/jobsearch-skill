@@ -109,6 +109,41 @@ def test_cli_usage_error_is_one_json_envelope(capsys) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("family", "canary"),
+    [
+        ("run", "/PRIVATE_RUN_PATH_CANARY"),
+        ("application", "PRIVATE_APPLICATION_NAME_CANARY"),
+        ("questions", "--PRIVATE_QUESTION_TOKEN_CANARY"),
+    ],
+)
+def test_unknown_nested_commands_emit_fixed_value_free_envelope(
+    capsys: pytest.CaptureFixture[str], family: str, canary: str
+) -> None:
+    assert main([family, canary]) == 2
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "schema_version": 1,
+        "ok": False,
+        "command": family,
+        "reason_code": "invalid_arguments",
+        "warnings": [],
+    }
+    assert canary not in captured.out
+
+
+@pytest.mark.parametrize("family", ["run", "application", "questions"])
+def test_missing_nested_command_uses_fixed_parent_id(
+    capsys: pytest.CaptureFixture[str], family: str
+) -> None:
+    assert main([family]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out)["command"] == family
+
+
 def test_cli_cv_resolve_returns_only_requested_selection(tmp_path: Path, capsys) -> None:
     home = tmp_path / ".jobsearch"
     assert main(["--home", str(home), "bootstrap"]) == 0

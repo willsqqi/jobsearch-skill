@@ -244,6 +244,8 @@ def test_remaining_contracts_accept_representative_v1_documents(
             "application_url": None,
             "application_metadata": {},
             "application_id": None,
+            "application_identity": None,
+            "workday_id": "",
             "created_at": timestamp,
             "updated_at": timestamp,
         },

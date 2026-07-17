@@ -275,6 +275,34 @@ def test_submission_pending_cannot_stop(run_store: RunStore, job_context: dict[s
         run_store.checkpoint(run.run_id, {"target_phase": "stopped"})
 
 
+def test_stopped_terminal_checkpoint_allows_only_identical_noop(
+    run_store: RunStore, job_context: dict[str, object]
+) -> None:
+    run = run_store.start(job_context)
+    stopped = run_store.checkpoint(
+        run.run_id,
+        {"target_phase": "stopped", "completed_page_ids": ["page-1"]},
+    )
+    path = run_store.runs_dir / run.run_id / "run.yaml"
+    original = path.read_bytes()
+    backup_count = len(list(run_store.store.backup_dir.glob("run.*.yaml")))
+
+    repeated = run_store.checkpoint(
+        run.run_id,
+        {"target_phase": "stopped", "completed_page_ids": ["page-1"]},
+    )
+    assert repeated.data == stopped.data
+    assert path.read_bytes() == original
+    assert len(list(run_store.store.backup_dir.glob("run.*.yaml"))) == backup_count
+
+    with pytest.raises(InvalidTransition):
+        run_store.checkpoint(
+            run.run_id,
+            {"target_phase": "stopped", "completed_page_ids": ["page-2"]},
+        )
+    assert path.read_bytes() == original
+
+
 def test_checkpoint_is_closed_merges_duplicates_and_identical_repeat_is_noop(
     run_store: RunStore, job_context: dict[str, object]
 ) -> None:

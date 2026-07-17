@@ -72,12 +72,28 @@ class ApplicationTracker:
         url = canonicalize_job_url(raw_url)
         metadata = data.get("application_metadata")
         stored_workday = metadata.get("workday_id", "") if isinstance(metadata, Mapping) else ""
-        chosen_workday = (workday_id if workday_id is not None else stored_workday)
+        bound_identity = data.get("application_identity")
+        bound_workday = data.get("workday_id", "")
+        chosen_workday = workday_id if workday_id is not None else (
+            bound_workday if bound_identity is not None else stored_workday
+        )
         if not isinstance(chosen_workday, str):
             chosen_workday = ""
         chosen_workday = chosen_workday.strip()
         fingerprint = str(context["job_fingerprint"])
         application_id = _identity(fingerprint, url, chosen_workday)
+        if bound_identity is not None and bound_identity != application_id:
+            raise ApplicationConflictError(
+                "application_identity_conflict: application identity conflicts with the run",
+                reason_code="application_identity_conflict",
+            )
+        state = self.runs.bind_application_identity(
+            run_id,
+            application_url=url,
+            application_identity=application_id,
+            workday_id=chosen_workday,
+        )
+        data = state.data
         existing_identity = data.get("application_id")
         if existing_identity not in (None, application_id):
             raise ApplicationConflictError(
@@ -113,8 +129,8 @@ class ApplicationTracker:
             # All cross-file tracker operations lock applications.csv before run.yaml.
             # Re-read the run under that ordering so stale pre-lock identity cannot append.
             locked_state = self.runs.get(run_id)
-            locked_identity = locked_state.data.get("application_id")
-            if locked_identity not in (None, application_id):
+            locked_identity = locked_state.data.get("application_identity")
+            if locked_identity != application_id:
                 raise ApplicationConflictError(
                     "application_identity_conflict: application identity conflicts with the run",
                     reason_code="application_identity_conflict",

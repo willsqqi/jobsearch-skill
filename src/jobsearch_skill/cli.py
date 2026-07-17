@@ -79,12 +79,17 @@ def _success_envelope(command: str, result: dict[str, object]) -> dict[str, obje
 
 
 def _versioned_command(arguments: list[str]) -> str | None:
-    for parent in ("run", "application", "questions"):
+    allowed = {
+        "run": {"start", "analyze", "select-cv", "checkpoint", "show"},
+        "application": {"record"},
+        "questions": {"match", "validate-reuse", "sync"},
+    }
+    for parent, children in allowed.items():
         if parent not in arguments:
             continue
         index = arguments.index(parent)
         child = arguments[index + 1] if index + 1 < len(arguments) else ""
-        return f"{parent}.{child}" if child and not child.startswith("-") else parent
+        return f"{parent}.{child}" if child in children else parent
     return None
 
 

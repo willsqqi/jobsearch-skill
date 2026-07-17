@@ -9,6 +9,7 @@ import pytest
 
 from jobsearch_skill.errors import (
     ApplicationConflictError,
+    InvalidTransition,
     RunConflictError,
     StorageError,
     SubmissionNotConfirmed,
@@ -204,7 +205,11 @@ def test_tracker_recovers_when_csv_succeeded_before_run_advance(
 
     monkeypatch.setattr(runs, "confirm_submission", fail_once)
     with pytest.raises(StorageError):
-        tracker.record(run.run_id, confirmed_submitted=True)
+        tracker.record(
+            run.run_id,
+            confirmed_submitted=True,
+            workday_id="WD-RECOVERY",
+        )
 
     assert len(tracker.rows()) == 1
     assert runs.get(run.run_id).phase == "submission_pending"
@@ -212,7 +217,56 @@ def test_tracker_recovers_when_csv_succeeded_before_run_advance(
 
     recovered = tracker.record(run.run_id, confirmed_submitted=True)
 
+    assert recovered["application_id"] == "workday:WD-RECOVERY"
+    assert recovered["workday_id"] == "WD-RECOVERY"
     assert recovered["applied_at"] == applied_at
+    assert len(tracker.rows()) == 1
+    assert runs.get(run.run_id).phase == "submitted_confirmed"
+
+
+def test_tracker_recovers_when_identity_bound_before_csv_failure(
+    services: tuple[RunStore, ApplicationTracker], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs, tracker = services
+    run = _ready_run(runs)
+    original_update = tracker.store.update_csv
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise StorageError(
+                "storage_write: synthetic pre-CSV failure",
+                reason_code="storage_write",
+            )
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(tracker.store, "update_csv", fail_once)
+    with pytest.raises(StorageError):
+        tracker.record(
+            run.run_id,
+            confirmed_submitted=True,
+            workday_id="WD-BOUND",
+        )
+
+    bound = runs.get(run.run_id)
+    assert bound.phase == "submission_pending"
+    assert bound.data["application_identity"] == "workday:WD-BOUND"
+    assert bound.data["workday_id"] == "WD-BOUND"
+    assert tracker.rows() == []
+
+    with pytest.raises(ApplicationConflictError):
+        tracker.record(
+            run.run_id,
+            confirmed_submitted=True,
+            workday_id="WD-DIFFERENT",
+        )
+    assert tracker.rows() == []
+
+    recovered = tracker.record(run.run_id, confirmed_submitted=True)
+
+    assert recovered["application_id"] == "workday:WD-BOUND"
     assert len(tracker.rows()) == 1
     assert runs.get(run.run_id).phase == "submitted_confirmed"
 
@@ -275,3 +329,38 @@ def test_concurrent_different_identities_for_same_run_leave_no_orphan_row(
     assert sum(outcome is not None for outcome in outcomes) == 1
     assert len(tracker.rows()) == 1
     assert runs.get(run.run_id).data["application_id"] == tracker.rows()[0]["application_id"]
+
+
+def test_submitted_terminal_checkpoint_allows_only_identical_noop(
+    services: tuple[RunStore, ApplicationTracker],
+) -> None:
+    runs, tracker = services
+    run = _ready_run(runs)
+    tracker.record(run.run_id, confirmed_submitted=True)
+    state = runs.get(run.run_id)
+    path = runs.runs_dir / run.run_id / "run.yaml"
+    original = path.read_bytes()
+    backup_count = len(list(runs.store.backup_dir.glob("run.*.yaml")))
+
+    repeated = runs.checkpoint(
+        run.run_id,
+        {
+            "target_phase": "submitted_confirmed",
+            "application_url": state.data["application_url"],
+            "application_metadata": state.data["application_metadata"],
+        },
+    )
+
+    assert repeated.phase == "submitted_confirmed"
+    assert path.read_bytes() == original
+    assert len(list(runs.store.backup_dir.glob("run.*.yaml"))) == backup_count
+
+    with pytest.raises(InvalidTransition):
+        runs.checkpoint(
+            run.run_id,
+            {
+                "target_phase": "submitted_confirmed",
+                "completed_page_ids": ["late-page"],
+            },
+        )
+    assert path.read_bytes() == original

@@ -156,6 +156,8 @@ class RunStore:
             "application_url": None,
             "application_metadata": {},
             "application_id": None,
+            "application_identity": None,
+            "workday_id": "",
             "created_at": timestamp,
             "updated_at": timestamp,
         }
@@ -253,6 +255,22 @@ class RunStore:
             target = str(normalized["target_phase"])
             if source != target and (source, target) not in _CHECKPOINT_TRANSITIONS:
                 raise _invalid_transition()
+            if source in _TERMINAL_PHASES:
+                for key in (
+                    "completed_page_ids",
+                    "generated_artifacts",
+                    "pending_manual_actions",
+                    "unresolved_fields",
+                    "learning_changes",
+                ):
+                    if key in normalized and _stable_merge(
+                        document[key], normalized[key]  # type: ignore[arg-type]
+                    ) != document[key]:
+                        raise _invalid_transition()
+                for key in ("application_url", "application_metadata"):
+                    if key in normalized and document[key] != normalized[key]:
+                        raise _invalid_transition()
+                return document
             changed = source != target
             for key in (
                 "completed_page_ids",
@@ -328,8 +346,42 @@ class RunStore:
             )
         return active[0]
 
+    def bind_application_identity(
+        self,
+        run_id: str,
+        *,
+        application_url: str,
+        application_identity: str,
+        workday_id: str,
+    ) -> RunState:
+        """Durably bind tracker identity before acquiring applications.csv."""
+
+        def transform(document: dict[str, object]) -> Mapping[str, object]:
+            if document["phase"] not in {"submission_pending", "submitted_confirmed"}:
+                raise _invalid_transition()
+            if document["application_url"] != application_url:
+                raise _conflict("application_identity_conflict")
+            existing = document["application_identity"]
+            if existing is not None:
+                if existing != application_identity or document["workday_id"] != workday_id:
+                    raise _conflict("application_identity_conflict")
+                return document
+            if document["phase"] != "submission_pending":
+                raise _invalid_transition()
+            document["application_identity"] = application_identity
+            document["workday_id"] = workday_id
+            document["application_metadata"] = {"workday_id": workday_id}
+            document["updated_at"] = _now()
+            return document
+
+        return RunState.from_document(
+            self.store.update_yaml(self._path(run_id), "run-state.v1", transform)
+        )
+
     def confirm_submission(self, run_id: str, application_id: str) -> RunState:
         def transform(document: dict[str, object]) -> Mapping[str, object]:
+            if document["application_identity"] != application_id:
+                raise _conflict("application_identity_conflict")
             existing = document["application_id"]
             if existing not in (None, application_id):
                 raise _conflict("application_identity_conflict")

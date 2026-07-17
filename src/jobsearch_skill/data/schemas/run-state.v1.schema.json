@@ -55,9 +55,11 @@
       "additionalProperties": false
     },
     "application_id": {"type": ["string", "null"]},
+    "application_identity": {"type": ["string", "null"]},
+    "workday_id": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"}
   },
-  "required": ["schema_version", "run_id", "job_context", "phase", "selected_cv", "analysis_ref", "generated_artifacts", "completed_page_ids", "pending_manual_actions", "unresolved_fields", "learning_changes", "application_url", "application_metadata", "application_id", "created_at", "updated_at"],
+  "required": ["schema_version", "run_id", "job_context", "phase", "selected_cv", "analysis_ref", "generated_artifacts", "completed_page_ids", "pending_manual_actions", "unresolved_fields", "learning_changes", "application_url", "application_metadata", "application_id", "application_identity", "workday_id", "created_at", "updated_at"],
   "additionalProperties": false
 }
