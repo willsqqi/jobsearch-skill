@@ -223,6 +223,7 @@ def test_remaining_contracts_accept_representative_v1_documents(
         "required_qualifications": ["Synthetic Systems"],
         "preferred_qualifications": ["Synthetic Systems"],
         "technologies": ["Synthetic Systems"],
+        "captured_at": timestamp,
         "job_fingerprint": f"sha256:{digest}",
     }
     documents: dict[str, dict[str, object]] = {

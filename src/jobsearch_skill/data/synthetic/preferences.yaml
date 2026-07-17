@@ -3,8 +3,8 @@ default_cv: Synthetic Systems
 cvs:
   - name: Synthetic Systems
     root: synthetic-cv
-    tex: synthetic-cv/resume.tex
-    pdf: synthetic-cv/resume.pdf
+    tex: resume.tex
+    pdf: resume.pdf
     assets: []
 browser: builtin
 platform_priority: [workday]

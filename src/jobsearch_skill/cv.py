@@ -10,8 +10,15 @@ from pathlib import Path
 
 from jobsearch_skill.errors import CVSelectionError
 
-_EXTERNAL_TEX_COMMAND = re.compile(
-    r"\\(?:includegraphics|input|include|usepackage)(?:\[[^\]]*\])?\s*\{[^}]+\}"
+_FILE_LOADING_COMMAND = re.compile(
+    r"\\(?:addbibresource|attachfile|bibliography|include|includeanimation|includegraphics|"
+    r"includepdf|input|inputminted|loadglsentries|lstinputlisting|subfile|subimport|"
+    r"verbatiminput|import)(?![A-Za-z@])",
+    re.IGNORECASE,
+)
+_USEPACKAGE_COMMAND = re.compile(
+    r"\\usepackage(?![A-Za-z@])(?:\s*\[[^\]]*\])?\s*\{(?P<packages>[^}]*)\}",
+    re.IGNORECASE,
 )
 
 
@@ -42,9 +49,13 @@ class CVRegistry:
             return self._registered_by_name(default, for_customization=for_customization)
         if not isinstance(reference, str) or not reference.strip():
             raise self._error("cv_reference_invalid")
+        entries = self._entries()
+        matches = [entry for entry in entries if entry["name"].casefold() == reference.casefold()]
+        if matches:
+            return self._registered_by_name(reference, for_customization=for_customization)
         if self._is_explicit_path(reference):
             return self._explicit_selection(reference, for_customization=for_customization)
-        return self._registered_by_name(reference, for_customization=for_customization)
+        raise self._error("cv_name_missing")
 
     @staticmethod
     def _error(reason_code: str, message: str | None = None) -> CVSelectionError:
@@ -84,22 +95,27 @@ class CVRegistry:
             raise self._error("cv_customization_requires_tex")
         return selection
 
-    def _resolve_under(self, base: Path, relative: object) -> Path:
-        if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+    def _registry_root(self, value: object) -> Path:
+        if not isinstance(value, str) or not value:
             raise self._error("cv_registry_invalid")
-        candidate = (base / relative).resolve()
-        if not candidate.is_relative_to(self._home):
+        raw = Path(value).expanduser()
+        candidate = raw.resolve() if raw.is_absolute() else (self._home / raw).resolve()
+        if not raw.is_absolute() and not candidate.is_relative_to(self._home):
             raise self._error("cv_registry_invalid")
         return candidate
 
     def _declared_file(self, root: Path, value: object) -> Path:
-        home_candidate = self._resolve_under(self._home, value)
-        path = home_candidate if home_candidate.exists() else self._resolve_under(root, value)
+        if not isinstance(value, str) or not value:
+            raise self._error("cv_registry_invalid")
+        raw = Path(value).expanduser()
+        path = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+        if not raw.is_absolute() and not path.is_relative_to(root):
+            raise self._error("cv_registry_invalid")
         self._readable_file(path, registered=True)
         return path
 
     def _registered_selection(self, entry: Mapping[str, object]) -> CVSelection:
-        root = self._resolve_under(self._home, entry.get("root"))
+        root = self._registry_root(entry.get("root"))
         if not root.is_dir():
             raise self._error("cv_registry_invalid")
         tex = self._declared_file(root, entry["tex"]) if "tex" in entry else None
@@ -144,4 +160,38 @@ class CVRegistry:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as error:
             raise CVRegistry._error("cv_path_unavailable") from error
-        return _EXTERNAL_TEX_COMMAND.search(text) is not None
+        uncommented = CVRegistry._strip_tex_comments(text)
+        if _FILE_LOADING_COMMAND.search(uncommented) is not None:
+            return True
+        for match in _USEPACKAGE_COMMAND.finditer(uncommented):
+            packages = (package.strip() for package in match.group("packages").split(","))
+            if any(
+                package
+                and (
+                    package.startswith(".")
+                    or "/" in package
+                    or "\\" in package
+                    or package.casefold().endswith(".sty")
+                )
+                for package in packages
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _strip_tex_comments(text: str) -> str:
+        lines: list[str] = []
+        for line in text.splitlines():
+            for index, character in enumerate(line):
+                if character != "%":
+                    continue
+                preceding_backslashes = 0
+                cursor = index - 1
+                while cursor >= 0 and line[cursor] == "\\":
+                    preceding_backslashes += 1
+                    cursor -= 1
+                if preceding_backslashes % 2 == 0:
+                    line = line[:index]
+                    break
+            lines.append(line)
+        return "\n".join(lines)

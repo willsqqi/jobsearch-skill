@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jobsearch_skill.errors import JobContextError
+from jobsearch_skill.errors import JobContextError, SchemaValidationError
 from jobsearch_skill.jobs import make_job_context
 from jobsearch_skill.schema import SchemaRegistry
 
@@ -20,6 +20,14 @@ def test_job_fixture_normalizes_to_packaged_contract() -> None:
     SchemaRegistry().validate("job-context.v1", context)
     assert context["canonical_url"] == "https://careers.example.invalid/jobs/backend-engineer?job_id=7"
     assert str(context["captured_at"]).endswith("Z")
+
+
+def test_job_context_schema_requires_captured_at() -> None:
+    context = make_job_context(job_url="https://example.invalid/jobs/7", description="Build APIs")
+    context.pop("captured_at")
+
+    with pytest.raises(SchemaValidationError, match="schema_validation"):
+        SchemaRegistry().validate("job-context.v1", context)
 
 
 def test_job_fingerprint_ignores_url_tracking_parameters() -> None:

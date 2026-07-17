@@ -19,6 +19,6 @@
     "captured_at": {"type": "string", "format": "date-time"},
     "job_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
   },
-  "required": ["schema_version", "job_url", "canonical_url", "company", "role", "location", "employment_type", "description", "responsibilities", "required_qualifications", "preferred_qualifications", "technologies", "job_fingerprint"],
+  "required": ["schema_version", "job_url", "canonical_url", "company", "role", "location", "employment_type", "description", "responsibilities", "required_qualifications", "preferred_qualifications", "technologies", "captured_at", "job_fingerprint"],
   "additionalProperties": false
 }

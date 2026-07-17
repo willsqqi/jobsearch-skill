@@ -21,9 +21,10 @@
         "required_qualifications": {"type": "array", "items": {"type": "string"}},
         "preferred_qualifications": {"type": "array", "items": {"type": "string"}},
         "technologies": {"type": "array", "items": {"type": "string"}},
+        "captured_at": {"type": "string", "format": "date-time"},
         "job_fingerprint": {"type": "string"}
       },
-      "required": ["schema_version", "job_url", "canonical_url", "company", "role", "location", "employment_type", "description", "responsibilities", "required_qualifications", "preferred_qualifications", "technologies", "job_fingerprint"],
+      "required": ["schema_version", "job_url", "canonical_url", "company", "role", "location", "employment_type", "description", "responsibilities", "required_qualifications", "preferred_qualifications", "technologies", "captured_at", "job_fingerprint"],
       "additionalProperties": false
     },
     "phase": {"enum": ["created", "analyzed", "cv_selected", "cv_ready", "applying", "upload_pending", "review_pending", "submission_pending", "submitted_confirmed", "stopped"]},
