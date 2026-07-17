@@ -37,6 +37,7 @@ def populated_questions_document() -> dict[str, object]:
                 "observed_wordings": ["Synthetic reviewed question?"],
                 "answer_type": "boolean",
                 "scope": {"kind": "global"},
+                "qualifiers": {"negated": False},
                 "topic_tags": [],
                 "role_tags": [],
                 "answer": {"value": True, "source": "user", "updated_at": timestamp},

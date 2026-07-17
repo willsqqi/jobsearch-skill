@@ -176,6 +176,7 @@ def test_question_answer_type_controls_value_type(schema_registry: SchemaRegistr
                 "observed_wordings": ["Synthetic question?"],
                 "answer_type": "boolean",
                 "scope": {"kind": "global"},
+                "qualifiers": {"negated": False},
                 "topic_tags": ["synthetic"],
                 "role_tags": [],
                 "answer": {

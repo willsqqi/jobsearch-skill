@@ -15,6 +15,17 @@
       "required": ["kind"],
       "additionalProperties": false
     },
+    "qualifiers": {
+      "type": "object",
+      "properties": {
+        "negated": {"type": "boolean"},
+        "jurisdiction": {"type": "string"},
+        "time_period": {"type": "string"},
+        "unit": {"type": "string"}
+      },
+      "required": ["negated"],
+      "additionalProperties": false
+    },
     "answer": {
       "type": "object",
       "properties": {
@@ -43,6 +54,7 @@
         "observed_wordings": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
         "answer_type": {"enum": ["boolean", "string", "selection", "multi_selection", "number", "date", "free_text"]},
         "scope": {"$ref": "#/$defs/scope"},
+        "qualifiers": {"$ref": "#/$defs/qualifiers"},
         "topic_tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "role_tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "answer": {"$ref": "#/$defs/answer"},
@@ -50,7 +62,7 @@
         "updated_at": {"type": "string", "format": "date-time"},
         "history": {"type": "array", "items": {"$ref": "#/$defs/history"}}
       },
-      "required": ["canonical_id", "canonical_wording", "observed_wordings", "answer_type", "scope", "topic_tags", "role_tags", "answer", "created_at", "updated_at", "history"],
+      "required": ["canonical_id", "canonical_wording", "observed_wordings", "answer_type", "scope", "qualifiers", "topic_tags", "role_tags", "answer", "created_at", "updated_at", "history"],
       "allOf": [
         {"if": {"properties": {"answer_type": {"const": "boolean"}}}, "then": {"properties": {"answer": {"properties": {"value": {"type": "boolean"}}}, "history": {"items": {"properties": {"value": {"type": "boolean"}}}}}}},
         {"if": {"properties": {"answer_type": {"enum": ["string", "selection", "date", "free_text"]}}}, "then": {"properties": {"answer": {"properties": {"value": {"type": "string"}}}, "history": {"items": {"properties": {"value": {"type": "string"}}}}}}},

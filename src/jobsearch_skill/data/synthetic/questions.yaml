@@ -5,6 +5,7 @@ questions:
     observed_wordings: ["Synthetic Systems boolean?"]
     answer_type: boolean
     scope: {kind: global}
+    qualifiers: {negated: false}
     topic_tags: ["Synthetic Systems"]
     role_tags: ["Synthetic Systems"]
     answer: {value: true, source: user, updated_at: "2026-07-17T00:00:00Z"}
@@ -16,6 +17,7 @@ questions:
     observed_wordings: ["Synthetic Systems selection?"]
     answer_type: selection
     scope: {kind: company, company: Synthetic Systems}
+    qualifiers: {negated: false}
     topic_tags: ["Synthetic Systems"]
     role_tags: ["Synthetic Systems"]
     answer: {value: Synthetic Systems, source: profile, updated_at: "2026-07-17T00:00:00Z"}
@@ -27,6 +29,7 @@ questions:
     observed_wordings: ["Synthetic Systems multi selection?"]
     answer_type: multi_selection
     scope: {kind: role, role: Synthetic Systems}
+    qualifiers: {negated: false}
     topic_tags: ["Synthetic Systems"]
     role_tags: ["Synthetic Systems"]
     answer: {value: ["Synthetic Systems"], source: codex_reviewed, updated_at: "2026-07-17T00:00:00Z"}
@@ -38,6 +41,7 @@ questions:
     observed_wordings: ["Synthetic Systems number?"]
     answer_type: number
     scope: {kind: job, job_fingerprint: synthetic-systems}
+    qualifiers: {negated: false}
     topic_tags: ["Synthetic Systems"]
     role_tags: ["Synthetic Systems"]
     answer: {value: 1, source: imported, updated_at: "2026-07-17T00:00:00Z"}
@@ -49,6 +53,7 @@ questions:
     observed_wordings: ["Synthetic Systems date?"]
     answer_type: date
     scope: {kind: global}
+    qualifiers: {negated: false}
     topic_tags: ["Synthetic Systems"]
     role_tags: ["Synthetic Systems"]
     answer: {value: "2026-07-17", source: user, updated_at: "2026-07-17T00:00:00Z"}
@@ -60,6 +65,7 @@ questions:
     observed_wordings: ["Synthetic Systems free text?"]
     answer_type: free_text
     scope: {kind: global}
+    qualifiers: {negated: false}
     topic_tags: ["Synthetic Systems"]
     role_tags: ["Synthetic Systems"]
     answer: {value: Avery Example, source: user, updated_at: "2026-07-17T00:00:00Z"}
