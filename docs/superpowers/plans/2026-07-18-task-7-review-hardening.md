@@ -103,4 +103,4 @@ The follow-up implementation is specified in `2026-07-18-task-7-final-review-har
 - [x] Bind the manifest/facts/evidence bundle to the run-selected CV name before compiler execution.
 - [x] Enforce exact repeat-prepare inventory, case-fold namespace uniqueness, and `0700`/`0600` modes.
 - [x] Run focused tests, the full suite, Ruff, diff/privacy checks, and a fresh real PDF render/filesystem audit.
-- [ ] Record the independent final Critical/Important-only review and pushed commit SHAs in `.superpowers/sdd/task-7-report.md`.
+- [x] Record the independent final Critical/Important-only review and pushed commit SHAs in `.superpowers/sdd/task-7-report.md`.

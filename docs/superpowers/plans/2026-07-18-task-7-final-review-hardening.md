@@ -127,5 +127,5 @@
 - [x] Run Ruff, `git diff --check`, and tracked-diff privacy scans.
 - [x] Build a fresh real PDF, inspect `pdfinfo`, render every page, visually inspect all pages, and audit hashes, `0700`/`0600` modes, source immutability, output placement, workspace cleanup, and sidecar absence.
 - [x] Obtain an independent final code review with no Critical or Important findings.
-- [ ] Refresh both hardening plans and `.superpowers/sdd/task-7-report.md` with exact evidence and commit SHAs; explicitly stage the ignored report.
-- [ ] Commit implementation and delivery record, push `codex/jobsearch-v0.1`, verify local/remote SHA equality, and confirm a clean worktree.
+- [x] Refresh both hardening plans and `.superpowers/sdd/task-7-report.md` with exact evidence and commit SHAs; explicitly stage the ignored report.
+- [x] Commit implementation and delivery record, push `codex/jobsearch-v0.1`, verify local/remote SHA equality, and confirm a clean worktree.

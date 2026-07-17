@@ -1,67 +1,72 @@
-# Task 7 report: review hardening for verified CV artifacts
+# Task 7 report: final review hardening for verified CV artifacts
 
 ## Outcome
 
-Closed all Critical and Important Task 7 review findings. The CV pipeline now uses descriptor-bound input snapshots, exact run/CV/source evidence and facts binding, strict manifests, a restricted LaTeX boundary, private crash-recoverable compiler workspaces, process-group timeout termination, value-free diagnostics, and same-bytes PDF verification. `jobsearch_skill.cv` remains the compatible public API through a 28-line facade over focused modules.
+Closed the renewed Critical and Important Task 7 findings without changing the `jobsearch_skill.cv` public API or the required compiler argv. The final boundary adds strict portable source references, symlink-preserving registry validation, complete `\includegraphics` syntax consumption, bounded whole-process-group teardown, memory-first PDF validation and stale-output recovery, selected-CV binding, and exact repeat-preparation inventory/mode checks.
 
-## TDD and review evidence
+No browser, upload, application, review, submission, fallback-CV, or network-request behavior was introduced. The command-substitution boundary regression uses only inert local fake executables that touch local sentinel files.
 
-- LaTeX/preparation hardening: 19 adversarial cases were RED before the restricted source/asset and descriptor boundary; all moved GREEN.
-- Isolated compilation: ambient home/system/project rc and helper-surface cases were captured RED; the isolation slice moved GREEN with the exact argv unchanged.
-- Evidence/facts/manifest rebinding: transplanted run, CV, aggregate hash, ordered source list, source text, copied-file mapping, expected-TeX, and expected-PDF cases were captured RED and moved GREEN.
-- Structured diagnostics: tokenized stdout/stderr cases were RED because substitution redaction retained canary fragments; all moved GREEN with a closed JSON record.
-- Reviewer regressions captured and closed: starred `\includegraphics`, duplicate/reordered evidence hashes, changed verified PDF, same-stem declared-PDF collision, child process survival after timeout, crash-unsafe source unlink, stale raw compiler workspace recovery, unsafe stale symlink handling, and option-like source references.
-- Final focused CV/registry/schema/build collection: 134 passed.
-- Final full suite: 324 passed.
-- Ruff: `All checks passed!`; `git diff --check`: clean.
-- Final nested reviewer verdict: no Critical or Important code findings remain; its independent full suite, Ruff, diff, and privacy checks were also green.
+## Witnessed RED/GREEN evidence
+
+- Portable references and schemas: the new registry/prepare/schema slice was witnessed at 46 failed and 14 passed before the strict grammar. After implementation, the focused portable-reference collection passed 63 tests.
+- Real compiler filename boundary: both backticked `curl` and `gs` names reached inert local sentinel helpers through real `latexmk` before the fix. Both are rejected before compiler execution after the fix; no network request exists in either helper.
+- Graphics grammar: five malformed, unconsumed, absolute, or undeclared variants failed before implementation while four approved spacing/comment variants passed. All nine pass after full-consumption enforcement.
+- Timeout lifecycle: the deterministic closed-pipe model proved the old cleanup sent only `SIGTERM` and returned while the group remained alive. The new code probes the group independently, escalates to `SIGKILL`, and keeps every wait bounded; both the modeled regression and a real forked TERM-ignoring child regression pass.
+- PDF lifecycle: stale-output purge, pre-publication parsing, and page-extraction normalization each failed before implementation. The complete lifecycle slice, including malformed, empty, encrypted, no-text, and symlink output cases, passes after memory-first validation.
+- Selected-CV binding: a consistently transplanted manifest/facts/evidence bundle reached the compiler before the fix. It now stops at `cv_manifest_mismatch` before facts/evidence loading or compiler execution.
+- Repeat prepare: extra rc/sidecar/directory entries, public modes, and case-fold collisions produced eight witnessed failures before implementation. Exact file/directory inventory, case-folded namespace uniqueness, and `0700`/`0600` enforcement now reject each mutation, including nested directory mode and directory-prefix case collisions.
+- Independent-review follow-ups: invalid compiler UTF-8, explicit files beneath nonportable parent directories, validated absolute registered roots, symlinked declared-file directories, and symlinked relative-root ancestors each received a witnessed RED regression and focused GREEN fix.
+- Final focused registry/prepare/schema/build collection: 205 passed.
 
 ## Security and behavior verified
 
-- Inputs are opened component-by-component with `O_NOFOLLOW` and `O_NONBLOCK` before rejecting special files. The exact opened bytes are validated, hashed, extracted, copied atomically, and digest-checked after copy.
-- TeX accepts one `article` document with a deliberately narrow command/environment/package allowlist. Declared assets are CRC-valid PNG files only; active source/code assets, rc files, special files, symlinks, undeclared inputs, dangerous primitives, and option-like path components fail closed.
-- Builds retain the required argument array `latexmk -pdf -interaction=nonstopmode -halt-on-error <tex-name>`, with `shell=False`, captured output, and a 120-second timeout.
-- Compilation occurs in a mode-`0700` private workspace beneath the generated run root. Digest-checked TeX/assets are staged there; the manifest-bound source tree is never unlinked or overwritten. The verified artifact is atomically persisted separately at `output/<tex-stem>.pdf`.
-- `latexmk` starts in a new POSIX session. Timeout handling terminates the entire process group, waits, escalates to `SIGKILL` when needed, and waits again before cleanup. A real stubborn-child regression proves no late write occurs.
-- Normal workspace cleanup removes compiler sidecars on exit. At the next build, stale `.compiler-work-*` directories from an interpreter/host crash are validated without following links and removed before compiler execution; symlink/special entries fail closed.
-- A private isolated HOME/XDG/TEXMF/TMP environment supplies a trusted rc that disables later automatic rc loading. Shell escape is disabled and TeX input/output policies are restricted. Ambient rc sentinels do not execute; the real build database showed no Ghostscript, `ps2pdf`, or curl helper.
-- Evidence is rebound to the current run, CV name, deterministic aggregate, exact ordered source hashes, and text re-extracted from current bytes. Build repeats that check against prepared bytes and revalidates every facts anchor before compilation.
-- Manifest reads validate schema plus exact source-hash/copied-file ordering, aggregate recomputation, path-safe expected TeX/PDF membership, semantic output location, and current copied-file digests. `source_root` is not persisted.
-- Failure logs are closed JSON with only allowlisted reason/stage, integer return code/page count, and boolean presence flags. Raw stdout, stderr, exception values, paths, CV values, and compiler sidecars are not persisted.
-- Verified rebuilds rehash every prepared input and require the existing output digest. PDF parsing, text extraction, identity checking, hashing, and final persistence all use one descriptor-read byte snapshot.
-- No fallback CV, browser, upload, application, review, submission, or phase transition was introduced.
+- Runtime and JSON schemas share an ASCII portable-component grammar for staged source references and basenames. Those compiler-relevant components reject whitespace, control characters, Unicode, shell metacharacters, leading dot/hyphen, trailing dot, traversal, and wrong or case-changed source-kind extensions.
+- Explicit paths and absolute registered roots retain support for spaces, Unicode, and hidden parent components because parent spelling never becomes a compiler token. Relative registered roots remain portable refs; absolute roots are control-free paths.
+- Registry and explicit paths retain their declared spelling through validation. Component-by-component directory opens, `lstat`, `O_NOFOLLOW`, `O_NONBLOCK`, regular-file checks, stable descriptor identity, and exact byte-count reads reject final or nested declared symlinks and special files without resolving through them.
+- TeX permits only the restricted command, class, package, and environment surface. Every file-loading command occurrence must begin one complete approved `\includegraphics` production; legal whitespace, star, option, and stripped-comment variants remain supported only for declared PNG assets.
+- Builds retain exactly `latexmk -pdf -interaction=nonstopmode -halt-on-error <tex-name>`, `shell=False`, captured output, the 120-second timeout, and the isolated private LaTeX environment.
+- Timeout cleanup sends `SIGTERM`, waits only to a monotonic deadline, probes the whole process group with `killpg(pgid, 0)`, sends `SIGKILL` if any member remains, and performs only bounded drain/poll operations.
+- Compiler pipes decode explicitly as UTF-8 with replacement, so arbitrary invalid bytes can only set value-free stdout/stderr presence flags and cannot escape structured diagnostics.
+- Non-verified builds purge any stale output tree before compiler execution. Compiled bytes are parsed, encryption-checked, page-counted, text-extracted, identity-checked, and hashed in memory before the output directory is created or bytes are atomically published.
+- Expected pypdf and page-extraction failures enter the closed `cv_pdf_verification` diagnostic path. Invalid bytes never appear at the persistent output path.
+- A prepared manifest must match the current run ID, job fingerprint, and `selected_cv.name` before its facts/evidence artifacts are accepted.
+- Repeat preparation requires an exact declared source-file inventory, exactly the needed parent directories, no symlink/special/extra entry, case-insensitive namespace uniqueness, destination/source/nested directory mode `0700`, and manifest/source file mode `0600`.
+- The bootstrap preference seed now uses the schema-valid inert placeholder `UNCONFIGURED.pdf`; this preserves bootstrap behavior under exact extension validation.
+- Failure logs remain value-free closed JSON. No raw stdout/stderr, exception value, private path, compiler sidecar, or unverified PDF persists.
 
-## Module structure
+## Fresh real PDF and filesystem QA
 
-- `cv.py`: public compatibility facade.
-- `cv_models.py`: public immutable result/selection models.
-- `cv_core.py`: shared service dependencies and invariants.
-- `cv_registry.py`: conservative CV resolution.
-- `cv_security.py`: descriptor I/O, TeX/PNG validation, private modes, and isolated environment.
-- `cv_evidence.py`: evidence extraction and facts binding.
-- `cv_prepare.py`: staging and strict manifest persistence.
-- `cv_build.py`: private compiler workspace, process-group lifecycle, diagnostics, recovery cleanup, and PDF verification.
+- Fresh QA root: `/private/tmp/jobsearch-task7-final-qa.eMW1oe`.
+- Verified artifact: `.../output/resume.pdf`; one Letter page, 58,811 bytes, PDF 1.7, pdfTeX 1.40.27, not encrypted, no JavaScript, no forms.
+- Rendered every page at 150 DPI with Poppler and inspected the only page at original resolution. Typography, hierarchy, alignment, spacing, margins, and glyphs are clear; there is no clipping, overlap, black box, broken rendering, or unreadable text.
+- Original and prepared `resume.tex` SHA-256: `babd5b6593f6dda9ec819459d566e21789cf00815ca05f45d78740fac8e1c626`.
+- Original and prepared declared `resume.pdf` SHA-256: `6a6da99c153904098fe8c59552a7447dc109325ee7d7d50590b60c55ecf94e62`.
+- Verified output SHA-256: `965f3330f932693ab7911454c29e9beebf813f6f6461619a2a65b4d685155f6d`, exactly equal to `manifest.verification.pdf_sha256`.
+- `source/` contains exactly `resume.tex` and `resume.pdf`; `output/` contains exactly the verified `resume.pdf`.
+- Every generated directory, including LaTeX isolation directories, is `0700`; the manifest, trusted fixed rc, declared copies, and verified output are `0600`.
+- No `.log`, `.aux`, `.fls`, `.fdb_latexmk`, or `.compiler-work-*` sidecar remains.
 
-## Fresh PDF and filesystem QA
+## Module and contract changes
 
-- Fresh real build: `/tmp/jobsearch-task7-final-qa.Y62PV1`; verified artifact at `.../output/resume.pdf`. Render intermediates were removed after inspection.
-- `pdfinfo`: pdfTeX PDF 1.7, Letter, one page, 58,811 bytes, not encrypted, no JavaScript.
-- Rendered every page at 150 DPI and inspected the only page at original resolution. Text, hierarchy, alignment, margins, and glyphs are clear; no clipping, overlap, black boxes, or broken rendering.
-- Copied `resume.tex` SHA-256: `babd5b6593f6dda9ec819459d566e21789cf00815ca05f45d78740fac8e1c626`.
-- Declared source `resume.pdf` SHA-256: `6a6da99c153904098fe8c59552a7447dc109325ee7d7d50590b60c55ecf94e62`.
-- Verified output PDF SHA-256: `ba5daf3a0cb07e87de949248cc74c0ffb0c57b4867ec2f55724ff00f60c1bd5e`, exactly equal to `manifest.verification.pdf_sha256`.
-- Every generated directory is `0700`; the manifest, trusted fixed rc, declared source copies, and output PDF are `0600`.
-- `source/` contains only the declared `resume.tex` and `resume.pdf`; `output/` contains the verified `resume.pdf`; no `.log`, `.aux`, `.fls`, `.fdb_latexmk`, or `.compiler-work-*` remains.
+- `cv_security.py`: portable reference/path predicates, exact extensions, complete graphics parsing, descriptor snapshots.
+- `cv_registry.py`: non-resolving registry/explicit path validation and declared symlink rejection.
+- `cv_prepare.py`: case-fold namespace validation plus exact repeat inventory and private modes.
+- `cv_build.py`: selected-CV binding, bounded process groups, stale-output purge, memory-first PDF verification/publication.
+- `preferences.v1`, `cv-manifest.v1`, `cv-evidence.v1`, and `cv-facts.v1`: portable source-kind reference contracts, with an absolute-root compatibility alternative where no path becomes a compiler token.
+- `home.py`: schema-valid bootstrap PDF placeholder.
+- Registry, prepare, schema, and build tests: adversarial RED/GREEN regressions for every reviewer finding.
 
-## Files changed
+## Delivery Verification
 
-- Public/focused implementation: `src/jobsearch_skill/cv.py`, `cv_models.py`, `cv_core.py`, `cv_registry.py`, `cv_security.py`, `cv_evidence.py`, `cv_prepare.py`, `cv_build.py`.
-- Contracts: `cv-evidence.v1.schema.json`, `cv-facts.v1.schema.json`, `cv-manifest.v1.schema.json`.
-- Tests/fixtures: `tests/fixtures/latex-cv/evidence.json`, `test_cv_prepare.py`, `test_cv_facts.py`, `test_cv_build.py`, `test_schema.py`.
-- Plan: `docs/superpowers/plans/2026-07-18-task-7-review-hardening.md`.
-
-## Delivery
-
-- Base commit: `688e625 feat: build verified tailored CV artifacts`.
-- Review-fix commit: `9f2131c fix: harden verified CV build boundary`.
+- Base feature commit: `688e625 feat: build verified tailored CV artifacts`.
+- Prior review-fix commit: `9f2131c fix: harden verified CV build boundary`.
+- Prior evidence commit: `8847144 docs: record Task 7 hardening verification`.
+- Final implementation commit: `6824ad2dfe4fada0b49c3365b497ae062da82d66 fix: close final CV review findings`.
+- Final delivery/report: this report commit immediately follows the implementation commit in branch history.
 - Push target: `origin/codex/jobsearch-v0.1`.
+- Independent Critical/Important-only review: no remaining Critical or Important findings. The reviewer rechecked every original boundary, exact argv, public facade/signatures, UTF-8 diagnostics, explicit paths, and absolute-root compatibility.
+- Final focused suite: 205 passed in 13.59 seconds.
+- Final full suite: 413 passed in 17.94 seconds.
+- Independent reviewer verification: focused 205 passed; full suite 413 passed; Ruff and `git diff --check` clean.
+- Final Ruff, diff, schema JSON, and tracked-diff privacy results: clean.
+- Delivery verification: local `HEAD` and `origin/codex/jobsearch-v0.1` were checked for exact equality after push; the worktree was clean.
