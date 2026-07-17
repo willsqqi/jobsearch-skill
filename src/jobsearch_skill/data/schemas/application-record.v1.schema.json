@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/application-record.v1.schema.json",
+  "title": "One application tracker CSV row v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "application_id": {"type": "string", "minLength": 1},
+    "company": {"type": "string"},
+    "role": {"type": "string"},
+    "location": {"type": "string"},
+    "url": {"type": "string", "format": "uri"},
+    "job_fingerprint": {"type": "string"},
+    "cv_name": {"type": "string"},
+    "cv_path": {"type": "string"},
+    "analysis_ref": {"type": "string"},
+    "artifact_ref": {"type": "string"},
+    "applied_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["Applied", "Interview", "Offer", "Rejected", "Withdrawn"]},
+    "workday_id": {"type": "string"},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "required": ["schema_version", "application_id", "company", "role", "location", "url", "job_fingerprint", "cv_name", "cv_path", "analysis_ref", "artifact_ref", "applied_at", "status", "workday_id", "updated_at"],
+  "additionalProperties": false
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/profile.v1.schema.json",
+  "title": "Private application profile v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "identity": {
+      "type": "object",
+      "properties": {
+        "first_name": {"type": "string"},
+        "middle_name": {"type": "string"},
+        "last_name": {"type": "string"},
+        "preferred_name": {"type": "string"},
+        "full_name": {"type": "string"},
+        "pronouns": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "contact": {
+      "type": "object",
+      "properties": {
+        "email": {"type": "string", "format": "email"},
+        "phone": {"type": "string"},
+        "phone_country_code": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "address": {
+      "type": "object",
+      "properties": {
+        "line1": {"type": "string"},
+        "line2": {"type": "string"},
+        "city": {"type": "string"},
+        "region": {"type": "string"},
+        "postal_code": {"type": "string"},
+        "country": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "work_authorization": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Z]{2,3}$": {
+          "type": "object",
+          "properties": {
+            "authorized": {"type": "boolean"},
+            "status": {"type": "string"},
+            "sponsorship_required": {"type": "boolean"},
+            "future_sponsorship_required": {"type": "boolean"},
+            "notes": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "compensation": {
+      "type": "object",
+      "properties": {
+        "target": {"type": "number"},
+        "minimum": {"type": "number"},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "period": {"enum": ["hour", "month", "year"]},
+        "notes": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "demographics": {
+      "type": "object",
+      "properties": {
+        "gender": {"type": "string"},
+        "race_ethnicity": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "sexual_orientation": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "disability": {
+      "type": "object",
+      "properties": {
+        "status": {"type": "string"},
+        "effective_date": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": false
+    },
+    "veteran": {
+      "type": "object",
+      "properties": {
+        "status": {"type": "string"},
+        "protected_categories": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "legal_attestations": {
+      "type": "object",
+      "properties": {
+        "accurate_information": {"type": "boolean"},
+        "background_check_consent": {"type": "boolean"},
+        "non_compete_restriction": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "links": {
+      "type": "object",
+      "properties": {
+        "linkedin": {"type": "string", "format": "uri"},
+        "github": {"type": "string", "format": "uri"},
+        "portfolio": {"type": "string", "format": "uri"},
+        "website": {"type": "string", "format": "uri"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "identity", "contact", "address", "work_authorization", "compensation", "demographics", "disability", "veteran", "legal_attestations", "links"],
+  "additionalProperties": false
+}

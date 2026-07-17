@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/cv-manifest.v1.schema.json",
+  "title": "Prepared and built CV manifest v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "source_cv_name": {"type": "string"},
+    "source_root": {"type": "string"},
+    "source_hashes": {"type": "object", "patternProperties": {"^.+$": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "additionalProperties": false},
+    "job_fingerprint": {"type": "string"},
+    "copied_files": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true},
+    "status": {"enum": ["prepared", "built", "verified", "failed"]},
+    "output_pdf": {"type": ["string", "null"]},
+    "verification": {
+      "type": ["object", "null"],
+      "properties": {
+        "verified": {"type": "boolean"},
+        "page_count": {"type": "integer", "minimum": 0},
+        "identity_present": {"type": "boolean"},
+        "pdf_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+        "log_ref": {"type": ["string", "null"]}
+      },
+      "required": ["verified", "page_count", "identity_present", "pdf_sha256", "log_ref"],
+      "additionalProperties": false
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "required": ["schema_version", "run_id", "source_cv_name", "source_root", "source_hashes", "job_fingerprint", "copied_files", "status", "output_pdf", "verification", "created_at", "updated_at"],
+  "additionalProperties": false
+}

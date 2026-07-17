@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/fill-plan.v1.schema.json",
+  "title": "Safe form fill plan v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "page_id": {"type": "string"},
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field_id": {"type": "string"},
+          "action": {"enum": ["fill", "ask", "leave_empty", "manual_upload", "manual_submit"]},
+          "value": {"oneOf": [{"type": "boolean"}, {"type": "string"}, {"type": "number"}, {"type": "array", "items": {"type": "string"}}]},
+          "source": {
+            "type": "object",
+            "properties": {"kind": {"enum": ["profile", "cv", "question", "codex", "user"]}, "ref": {"type": "string"}},
+            "required": ["kind", "ref"],
+            "additionalProperties": false
+          },
+          "match_kind": {"enum": ["direct", "exact", "alias", "semantic", "unseen"]},
+          "canonical_source_id": {"type": "string"},
+          "reason_code": {"type": "string"},
+          "review_required": {"type": "boolean"}
+        },
+        "required": ["field_id", "action"],
+        "allOf": [
+          {"if": {"properties": {"action": {"const": "fill"}}}, "then": {"required": ["value", "source"]}},
+          {"if": {"properties": {"action": {"enum": ["ask", "leave_empty", "manual_upload", "manual_submit"]}}}, "then": {"not": {"required": ["value"]}}}
+        ],
+        "additionalProperties": false
+      }
+    },
+    "stop_before_submit": {"const": true}
+  },
+  "required": ["schema_version", "run_id", "page_id", "decisions", "stop_before_submit"],
+  "additionalProperties": false
+}

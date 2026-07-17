@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/analysis.v1.schema.json",
+  "title": "Evidence-backed job analysis v1",
+  "$defs": {
+    "evidence_ref": {"type": "string", "minLength": 1},
+    "match": {
+      "type": "object",
+      "properties": {
+        "requirement": {"type": "string"},
+        "finding": {"type": "string"},
+        "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/evidence_ref"}, "minItems": 1, "uniqueItems": true}
+      },
+      "required": ["requirement", "finding", "evidence_refs"],
+      "additionalProperties": false
+    },
+    "partial_match": {
+      "type": "object",
+      "properties": {
+        "requirement": {"type": "string"},
+        "finding": {"type": "string"},
+        "limits": {"type": "string"},
+        "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/evidence_ref"}, "minItems": 1, "uniqueItems": true}
+      },
+      "required": ["requirement", "finding", "limits", "evidence_refs"],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "job_fingerprint": {"type": "string"},
+    "role_summary": {"type": "string"},
+    "required_qualifications": {"type": "array", "items": {"type": "string"}},
+    "preferred_qualifications": {"type": "array", "items": {"type": "string"}},
+    "strong_matches": {"type": "array", "items": {"$ref": "#/$defs/match"}},
+    "partial_matches": {"type": "array", "items": {"$ref": "#/$defs/partial_match"}},
+    "material_gaps": {"type": "array", "items": {"type": "string"}},
+    "cv_comparison": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cv_name": {"type": "string"},
+          "strong_matches": {"type": "array", "items": {"type": "string"}},
+          "partial_matches": {"type": "array", "items": {"type": "string"}},
+          "material_gaps": {"type": "array", "items": {"type": "string"}},
+          "rationale": {"type": "string"}
+        },
+        "required": ["cv_name", "strong_matches", "partial_matches", "material_gaps", "rationale"],
+        "additionalProperties": false
+      }
+    },
+    "recommended_cv": {"type": "string"},
+    "recommendation_rationale": {"type": "string"},
+    "customization": {
+      "type": "object",
+      "properties": {"worthwhile": {"type": "boolean"}, "rationale": {"type": "string"}},
+      "required": ["worthwhile", "rationale"],
+      "additionalProperties": false
+    },
+    "evidence_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "evidence_id": {"type": "string"},
+          "source_kind": {"enum": ["job", "cv", "profile"]},
+          "source_ref": {"type": "string"},
+          "anchor": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "required": ["evidence_id", "source_kind", "source_ref", "anchor", "sha256"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "run_id", "job_fingerprint", "role_summary", "required_qualifications", "preferred_qualifications", "strong_matches", "partial_matches", "material_gaps", "cv_comparison", "recommended_cv", "recommendation_rationale", "customization", "evidence_references"],
+  "additionalProperties": false
+}

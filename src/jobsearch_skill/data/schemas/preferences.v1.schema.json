@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/preferences.v1.schema.json",
+  "title": "Workflow preferences v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "default_cv": {"type": "string", "minLength": 1},
+    "cvs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "root": {"type": "string", "minLength": 1},
+          "tex": {"type": "string", "minLength": 1},
+          "pdf": {"type": "string", "minLength": 1},
+          "assets": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+        },
+        "required": ["name", "root", "assets"],
+        "anyOf": [{"required": ["tex"]}, {"required": ["pdf"]}],
+        "additionalProperties": false
+      }
+    },
+    "browser": {"const": "builtin"},
+    "platform_priority": {"type": "array", "items": {"enum": ["workday"]}, "minItems": 1, "uniqueItems": true},
+    "submission_mode": {"const": "manual"},
+    "generated_artifacts": {
+      "type": "object",
+      "properties": {
+        "naming_template": {"type": "string", "minLength": 1},
+        "retain_days": {"type": "integer", "minimum": 0},
+        "retain_failed_builds": {"type": "boolean"},
+        "retain_build_logs": {"type": "boolean"}
+      },
+      "required": ["naming_template", "retain_days", "retain_failed_builds", "retain_build_logs"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["schema_version", "default_cv", "cvs", "browser", "platform_priority", "submission_mode", "generated_artifacts"],
+  "additionalProperties": false
+}
