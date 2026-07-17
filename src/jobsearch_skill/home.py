@@ -226,7 +226,12 @@ def configure_private_home(private_home: Path, config_path: Path, repo_root: Pat
     """Validate a private home and atomically configure its local pointer."""
 
     resolved_home = validate_private_home(private_home, repo_root)
-    pointer = config_path.expanduser().resolve()
+    pointer = Path(os.path.abspath(config_path.expanduser()))
+    if pointer.is_symlink():
+        raise ConfigurationError(
+            "pointer_symlink: private_home_pointer must not be a symbolic link",
+            reason_code="pointer_symlink",
+        )
     config_directory = pointer.parent
     if not config_directory.exists():
         if not config_directory.parent.is_dir():

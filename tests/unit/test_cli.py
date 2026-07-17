@@ -1,8 +1,13 @@
-import json
 import csv
+import json
+import os
 from pathlib import Path
 
+import pytest
+
 from jobsearch_skill.cli import main
+from jobsearch_skill.errors import StorageError
+from jobsearch_skill.storage import SafeStore
 
 
 def test_version_envelope(capsys) -> None:
@@ -150,3 +155,77 @@ def test_cli_csv_parser_failure_is_safe_storage_error(
         "status": "error",
     }
     assert "PRIVATE_PARSER_CANARY" not in captured.out
+
+
+def test_configure_rejects_symlink_pointer_without_touching_target(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlinks unavailable")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    private_home = tmp_path / "PRIVATE_HOME_PATH_CANARY" / ".jobsearch"
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    unrelated = tmp_path / "unrelated-target.toml"
+    original = b"PRIVATE_SYMLINK_TARGET_CANARY\n"
+    unrelated.write_bytes(original)
+    pointer = config_dir / "config.toml"
+    pointer.symlink_to(unrelated)
+
+    result = main(["configure", str(private_home), "--config", str(pointer)])
+    captured = capsys.readouterr()
+
+    assert result == 3
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "reason_code": "pointer_symlink",
+        "status": "error",
+    }
+    assert unrelated.read_bytes() == original
+    assert pointer.is_symlink()
+    assert "PRIVATE_HOME_PATH_CANARY" not in captured.out
+    assert "PRIVATE_SYMLINK_TARGET_CANARY" not in captured.out
+    assert str(unrelated) not in captured.out
+
+
+def test_cli_preserves_primary_storage_error_when_temp_cleanup_fails(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    private_home = tmp_path / "PRIVATE_CLEANUP_HOME_CANARY" / ".jobsearch"
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    pointer = config_dir / "config.toml"
+    assert main(["configure", str(private_home), "--config", str(pointer)]) == 0
+    capsys.readouterr()
+    original = pointer.read_bytes()
+    original_unlink = Path.unlink
+
+    def fail_backup(*args, **kwargs):
+        raise StorageError(
+            "storage_backup: unable to create private backup",
+            reason_code="storage_backup",
+        )
+
+    def fail_temp_unlink(path: Path, *args, **kwargs):
+        if path.name.endswith(".tmp"):
+            raise OSError("PRIVATE_UNLINK_CANARY /private/temp-file")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(SafeStore, "_create_backup", fail_backup)
+    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
+
+    assert main(["configure", str(private_home), "--config", str(pointer)]) == 6
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "reason_code": "storage_backup",
+        "status": "error",
+    }
+    assert pointer.read_bytes() == original
+    assert "PRIVATE_UNLINK_CANARY" not in captured.out
+    assert "/private/temp-file" not in captured.out

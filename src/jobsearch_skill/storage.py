@@ -174,14 +174,28 @@ class SafeStore:
             return temporary_path
         except (OSError, UnicodeError) as error:
             if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
+                try:
+                    SafeStore._cleanup_temp(temporary_path)
+                except StorageError:
+                    pass
             raise StorageError(
                 "storage_write: unable to prepare private replacement",
                 reason_code="storage_write",
             ) from error
 
+    @staticmethod
+    def _cleanup_temp(path: Path) -> None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            raise StorageError(
+                "storage_cleanup: unable to remove private temporary data",
+                reason_code="storage_cleanup",
+            ) from error
+
     def _replace_locked(self, path: Path, text: str, *, create_backup: bool) -> None:
         temporary_path: Path | None = None
+        primary_failure = False
         try:
             temporary_path = self._write_temp(path, text)
             if create_backup:
@@ -189,15 +203,24 @@ class SafeStore:
             os.replace(temporary_path, path)
             temporary_path = None
         except StorageError:
+            primary_failure = True
             raise
         except OSError as error:
+            primary_failure = True
             raise StorageError(
                 "storage_replace: unable to atomically replace private data",
                 reason_code="storage_replace",
             ) from error
+        except BaseException:
+            primary_failure = True
+            raise
         finally:
             if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
+                try:
+                    self._cleanup_temp(temporary_path)
+                except StorageError:
+                    if not primary_failure:
+                        raise
 
     def write_text(self, path: Path, text: str, validator: Callable[[str], None]) -> None:
         with self._locked(path):

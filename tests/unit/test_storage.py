@@ -228,3 +228,34 @@ def test_temp_permission_failure_preserves_original_without_residue(
     assert "PRIVATE_CHMOD_CANARY" not in str(error.value)
     assert path.read_bytes() == original
     assert not list(path.parent.glob("*.tmp"))
+
+
+def test_cleanup_failure_does_not_mask_primary_safe_storage_error(
+    store: SafeStore, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.write_yaml(path, valid_questions_document(), "questions.v1")
+    original = path.read_bytes()
+    original_unlink = Path.unlink
+
+    def fail_backup(*args: object, **kwargs: object) -> None:
+        raise StorageError(
+            "storage_backup: unable to create private backup",
+            reason_code="storage_backup",
+        )
+
+    def fail_temp_unlink(candidate: Path, *args: object, **kwargs: object) -> None:
+        if candidate.name.endswith(".tmp"):
+            raise OSError("PRIVATE_UNLINK_CANARY /private/temp-file")
+        original_unlink(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(store, "_create_backup", fail_backup)
+    monkeypatch.setattr(Path, "unlink", fail_temp_unlink)
+
+    with pytest.raises(StorageError) as error:
+        store.write_yaml(path, populated_questions_document(), "questions.v1")
+
+    assert error.value.exit_code == 6
+    assert error.value.reason_code == "storage_backup"
+    assert "PRIVATE_UNLINK_CANARY" not in str(error.value)
+    assert "/private/temp-file" not in str(error.value)
+    assert path.read_bytes() == original
