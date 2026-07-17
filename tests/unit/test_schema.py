@@ -17,6 +17,7 @@ CONTRACTS = (
     "run-state.v1",
     "job-context.v1",
     "analysis.v1",
+    "cv-evidence.v1",
     "cv-facts.v1",
     "cv-manifest.v1",
     "form-snapshot.v1",
@@ -333,14 +334,32 @@ def test_remaining_contracts_accept_representative_v1_documents(
                 }
             ],
         },
+        "cv-evidence.v1": {
+            "schema_version": 1,
+            "run_id": "run_synthetic",
+            "cv_name": "Synthetic Systems",
+            "source_hash": digest,
+            "source_hashes": [{"source_ref": "resume.tex", "sha256": digest}],
+            "sources": [
+                {
+                    "source_ref": "resume.tex",
+                    "kind": "tex",
+                    "text": "Avery Example at Synthetic Systems",
+                }
+            ],
+            "created_at": timestamp,
+        },
         "cv-manifest.v1": {
             "schema_version": 1,
             "run_id": "run_synthetic",
             "source_cv_name": "Synthetic Systems",
             "source_root": "synthetic-cv",
+            "source_hash": digest,
             "source_hashes": {"resume.tex": digest},
             "job_fingerprint": f"sha256:{digest}",
             "copied_files": ["source/resume.tex"],
+            "expected_tex": "resume.tex",
+            "expected_pdf": None,
             "status": "prepared",
             "output_pdf": None,
             "verification": None,

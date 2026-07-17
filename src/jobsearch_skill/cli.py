@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .cv import CVRegistry, CVSelection
+from .cv import CVRegistry, CVSelection, CVService
 from .errors import JobsearchError, SchemaValidationError
 from .home import (
     bootstrap_private_home,
@@ -80,6 +80,7 @@ def _success_envelope(command: str, result: dict[str, object]) -> dict[str, obje
 
 def _versioned_command(arguments: list[str]) -> str | None:
     allowed = {
+        "cv": {"evidence", "facts", "prepare", "build"},
         "run": {"start", "analyze", "select-cv", "checkpoint", "show"},
         "application": {"record"},
         "questions": {"match", "validate-reuse", "sync"},
@@ -115,6 +116,15 @@ def main(argv: list[str] | None = None) -> int:
     resolve = cv_commands.add_parser("resolve")
     resolve.add_argument("--cv")
     resolve.add_argument("--for-customization", action="store_true")
+    cv_evidence = cv_commands.add_parser("evidence")
+    cv_evidence.add_argument("--run-id", required=True)
+    cv_facts = cv_commands.add_parser("facts")
+    cv_facts.add_argument("--run-id", required=True)
+    cv_facts.add_argument("--input", required=True, type=Path)
+    cv_prepare = cv_commands.add_parser("prepare")
+    cv_prepare.add_argument("--run-id", required=True)
+    cv_build = cv_commands.add_parser("build")
+    cv_build.add_argument("--run-id", required=True)
     questions = commands.add_parser("questions")
     question_commands = questions.add_subparsers(dest="question_command")
     match = question_commands.add_parser("match")
@@ -173,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         run_id = getattr(args, "run_id", None)
         requires_run_id = (
             args.command == "application"
+            or args.command == "cv" and args.cv_command in {"evidence", "facts", "prepare", "build"}
             or args.command == "run"
             and args.run_command != "start"
             and not getattr(args, "latest_open", False)
@@ -206,13 +217,12 @@ def main(argv: list[str] | None = None) -> int:
             _emit({"command": "validate", "missing_fields": missing, "status": status})
             return 3 if missing else 0
         if args.command == "cv":
-            if args.cv_command not in {"list", "resolve"}:
+            if args.cv_command not in {"list", "resolve", "evidence", "facts", "prepare", "build"}:
                 _emit({"reason_code": "invalid_arguments", "status": "error"})
                 return 2
             home = resolve_private_home(args.home, Path.cwd(), default_config_path())
-            preferences = SafeStore(registry, home / "backups").read_yaml(
-                home / "preferences.yaml", "preferences.v1"
-            )
+            store = SafeStore(registry, home / "backups")
+            preferences = store.read_yaml(home / "preferences.yaml", "preferences.v1")
             cvs = CVRegistry(preferences, home)
             if args.cv_command == "list":
                 _emit(
@@ -224,15 +234,64 @@ def main(argv: list[str] | None = None) -> int:
                     }
                 )
                 return 0
-            selection = cvs.resolve(args.cv, for_customization=args.for_customization)
-            _emit(
-                {
-                    "command": "cv resolve",
-                    "cv": _selection_payload(selection),
-                    "schema_version": 1,
-                    "status": "ok",
+            if args.cv_command == "resolve":
+                selection = cvs.resolve(args.cv, for_customization=args.for_customization)
+                _emit(
+                    {
+                        "command": "cv resolve",
+                        "cv": _selection_payload(selection),
+                        "schema_version": 1,
+                        "status": "ok",
+                    }
+                )
+                return 0
+            runs = RunStore(store, home / "runs")
+            state = runs.require_open(args.run_id)
+            selected = state.data.get("selected_cv")
+            selected_name = selected.get("name") if isinstance(selected, dict) else None
+            if not isinstance(selected_name, str):
+                raise SchemaValidationError(
+                    "cv_selection_mismatch: run CV selection is unavailable",
+                    reason_code="cv_selection_mismatch",
+                )
+            selection = cvs.resolve(selected_name)
+            service = CVService(home, store, runs, cvs)
+            command = f"cv.{args.cv_command}"
+            if args.cv_command == "evidence":
+                evidence = service.evidence(args.run_id, selection)
+                result = {
+                    "evidence_ref": evidence.reference,
+                    "source_count": len(evidence.source_hashes),
+                    "status": "stored",
                 }
-            )
+            elif args.cv_command == "facts":
+                facts = service.store_facts(args.run_id, selection, load_mapping(args.input))
+                source_hash = facts.get("source_hash")
+                facts_path = service.facts_path(args.run_id, str(source_hash))
+                result = {
+                    "facts_ref": facts_path.relative_to(home).as_posix(),
+                    "education_count": len(facts.get("education", [])),
+                    "employment_count": len(facts.get("employment", [])),
+                    "project_count": len(facts.get("projects", [])),
+                    "status": "stored",
+                }
+            elif args.cv_command == "prepare":
+                prepared = service.prepare(args.run_id, selection)
+                copied = prepared.manifest.get("copied_files")
+                result = {
+                    "manifest_ref": prepared.manifest_path.relative_to(home).as_posix(),
+                    "copied_count": len(copied) if isinstance(copied, list) else 0,
+                    "status": str(prepared.manifest.get("status")),
+                }
+            else:
+                built = service.build(args.run_id)
+                result = {
+                    "pdf_ref": built.pdf_reference,
+                    "page_count": built.page_count,
+                    "verified": built.verified,
+                    "status": "verified",
+                }
+            _emit(_success_envelope(command, result))
             return 0
         if args.command == "run":
             command = f"run.{args.run_command}"
@@ -424,7 +483,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return error.exit_code
         parent_command = getattr(args, "command", None)
-        if parent_command in {"run", "application"}:
+        if parent_command in {"run", "application"} or (
+            parent_command == "cv"
+            and getattr(args, "cv_command", None) in {"evidence", "facts", "prepare", "build"}
+        ):
             child = getattr(args, f"{parent_command}_command", None)
             command = f"{parent_command}.{child}" if child else parent_command
             _emit(

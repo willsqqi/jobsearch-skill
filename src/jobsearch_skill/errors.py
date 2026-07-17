@@ -57,6 +57,30 @@ class CVSelectionError(JobsearchError):
     exit_code = 4
 
 
+class CVFactsError(JobsearchError):
+    """CV facts are stale, unsupported, or not bound to the selected source."""
+
+    exit_code = 4
+
+
+class CVBuildError(JobsearchError):
+    """A CV artifact cannot be prepared or verified safely."""
+
+    exit_code = 5
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        log_path=None,
+        decision: str = "stop",
+    ) -> None:
+        super().__init__(message, reason_code=reason_code)
+        self.log_path = log_path
+        self.decision = decision
+
+
 class RunNotFoundError(JobsearchError):
     """A requested resumable run is unavailable."""
 
