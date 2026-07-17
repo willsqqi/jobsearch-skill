@@ -89,4 +89,4 @@
 - [x] Move behavior behind focused modules and reduce `cv.py` to a 28-line facade.
 - [x] Run 134 focused CV tests, full pytest (324 passed), Ruff, `git diff --check`, and a tracked-value/privacy scan.
 - [x] Build a fresh synthetic PDF, run `pdfinfo`, render every page with `pdftoppm`, inspect all PNGs, and audit hashes/modes/sidecar cleanup.
-- [ ] Update the report, explicitly stage scoped files, commit a new fix commit, push `codex/jobsearch-v0.1`, and record the SHA.
+- [x] Update the report, explicitly stage scoped files, commit a new fix commit, push `codex/jobsearch-v0.1`, and record the SHA.
