@@ -83,6 +83,21 @@ def test_replacement_creates_timestamped_backup_and_private_artifact_modes(
     assert stat.S_IMODE(store.backup_dir.stat().st_mode) == 0o700
 
 
+def test_transactional_yaml_noop_does_not_rewrite_or_create_backup(
+    store: SafeStore, path: Path
+) -> None:
+    original = valid_questions_document()
+    store.write_yaml(path, original, "questions.v1")
+    original_bytes = path.read_bytes()
+    before_backups = list(store.backup_dir.glob("questions.*.yaml"))
+
+    result = store.update_yaml(path, "questions.v1", lambda document: document)
+
+    assert result == original
+    assert path.read_bytes() == original_bytes
+    assert list(store.backup_dir.glob("questions.*.yaml")) == before_backups
+
+
 def test_store_sets_every_created_backup_parent_to_mode_0700(tmp_path: Path) -> None:
     nested = tmp_path / "private-root" / "state" / "backups"
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import stat
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -174,6 +176,23 @@ def test_invalid_or_partial_reviewed_input_preserves_original_bytes(
     assert path.read_bytes() == original
 
 
+def test_empty_qualifier_is_rejected_before_identical_repeat_and_preserves_bytes(
+    setup_memory: tuple[QuestionMemory, Path, SafeStore],
+) -> None:
+    memory, path, _ = setup_memory
+    memory.sync(reviewed_document())
+    original = path.read_bytes()
+    invalid = reviewed_document(
+        reviewed_entry(qualifiers={"negated": False, "jurisdiction": ""})
+    )
+
+    with pytest.raises(SchemaValidationError) as error:
+        memory.sync(invalid)
+
+    assert error.value.reason_code == "schema_validation"
+    assert path.read_bytes() == original
+
+
 def test_multi_entry_sync_is_all_or_none(
     setup_memory: tuple[QuestionMemory, Path, SafeStore],
 ) -> None:
@@ -205,6 +224,48 @@ def test_sync_persists_private_file_lock_and_backup_modes(
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.with_name("questions.yaml.lock").stat().st_mode) == 0o600
     assert all(stat.S_IMODE(backup.stat().st_mode) == 0o600 for backup in backups)
+
+
+def test_concurrent_syncs_preserve_both_distinct_reviewed_questions(
+    setup_memory: tuple[QuestionMemory, Path, SafeStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory, path, store = setup_memory
+    barrier = threading.Barrier(2)
+    original_write = store.write_yaml
+
+    def coordinated_write(*args: object, **kwargs: object) -> None:
+        barrier.wait(timeout=5)
+        original_write(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(store, "write_yaml", coordinated_write)
+    first = reviewed_document(reviewed_entry(wording="First distinct reviewed question?"))
+    second = reviewed_document(reviewed_entry(wording="Second distinct reviewed question?"))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(memory.sync, document) for document in (first, second)]
+        for future in futures:
+            future.result(timeout=10)
+
+    persisted = store.read_yaml(path, "questions.v1")
+    assert sorted(record["canonical_wording"] for record in persisted["questions"]) == [
+        "First distinct reviewed question?",
+        "Second distinct reviewed question?",
+    ]
+
+
+def test_identical_transactional_sync_does_not_rewrite_or_add_backup(
+    setup_memory: tuple[QuestionMemory, Path, SafeStore],
+) -> None:
+    memory, path, store = setup_memory
+    memory.sync(reviewed_document())
+    original = path.read_bytes()
+    backup_count = len(list(store.backup_dir.glob("questions.*.yaml")))
+
+    memory.sync(reviewed_document())
+
+    assert path.read_bytes() == original
+    assert len(list(store.backup_dir.glob("questions.*.yaml"))) == backup_count
 
 
 def _write_input(path: Path, document: dict[str, object]) -> None:

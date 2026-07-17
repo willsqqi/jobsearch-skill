@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import io
 import json
@@ -17,6 +18,7 @@ import yaml
 from filelock import FileLock, Timeout
 
 from jobsearch_skill.errors import (
+    JobsearchError,
     SchemaValidationError,
     StorageError,
     StorageValidationError,
@@ -263,6 +265,50 @@ class SafeStore:
             self._validate(contract, value)
             text = yaml.safe_dump(dict(value), sort_keys=False, allow_unicode=True)
             self._replace_locked(path, text, create_backup=True)
+
+    def update_yaml(
+        self,
+        path: Path,
+        contract: str,
+        transform: Callable[[dict[str, object]], Mapping[str, object]],
+    ) -> dict[str, object]:
+        """Validate and update YAML in one locked read-modify-write transaction."""
+
+        with self._locked(path):
+            try:
+                source = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, yaml.YAMLError) as error:
+                raise StorageError(
+                    "storage_read: unable to read private YAML",
+                    reason_code="storage_read",
+                ) from error
+            if not isinstance(source, dict):
+                raise StorageValidationError(
+                    "storage_validation: private YAML is not an object",
+                    reason_code="storage_validation",
+                )
+            self._validate(contract, source)
+            try:
+                target = transform(copy.deepcopy(source))
+            except JobsearchError:
+                raise
+            except Exception as error:
+                raise StorageError(
+                    "storage_transform: private update transform failed",
+                    reason_code="storage_transform",
+                ) from error
+            if not isinstance(target, Mapping):
+                raise StorageValidationError(
+                    "storage_validation: update target is not an object",
+                    reason_code="storage_validation",
+                )
+            replacement = dict(target)
+            self._validate(contract, replacement)
+            if replacement == source:
+                return replacement
+            text = yaml.safe_dump(replacement, sort_keys=False, allow_unicode=True)
+            self._replace_locked(path, text, create_backup=True)
+            return replacement
 
     def migrate_yaml(
         self,

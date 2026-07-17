@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from jobsearch_skill.questions import canonical_question_id, normalize_question
 
 
@@ -25,6 +27,28 @@ def test_normalization_preserves_numbers_currency_percentages_and_units() -> Non
     assert "10%" in normalized
     assert normalized != normalize_question("Expected compensation: $120,000.50 USD / month (10%)?")
     assert normalize_question("Temperature: -5 °C") != normalize_question("Temperature: 5 °C")
+
+
+@pytest.mark.parametrize("signed", ["-5", "- 5", "−5", "− 5", "﹣ 5", "－5"])
+def test_normalization_preserves_spaced_ascii_and_unicode_minus_signs(signed: str) -> None:
+    assert normalize_question(f"Temperature: {signed} °C") == normalize_question(
+        "Temperature: -5 °C"
+    )
+    assert normalize_question(f"Temperature: {signed} °C") != normalize_question(
+        "Temperature: 5 °C"
+    )
+
+
+@pytest.mark.parametrize("signed", ["+5", "+ 5", "＋ 5"])
+def test_normalization_preserves_spaced_ascii_and_unicode_plus_signs(signed: str) -> None:
+    assert normalize_question(f"Adjustment: {signed}%") == normalize_question("Adjustment: +5%")
+    assert normalize_question(f"Adjustment: {signed}%") != normalize_question("Adjustment: 5%")
+
+
+def test_normalization_keeps_irrelevant_hyphens_insignificant() -> None:
+    assert normalize_question("Is this a full-time role?") == normalize_question(
+        "Is this a full time role?"
+    )
 
 
 def test_normalization_uses_unicode_compatibility_and_case_folding() -> None:

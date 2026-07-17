@@ -86,7 +86,8 @@ def normalize_question(wording: str) -> str:
             reason_code="question_input_invalid",
             field_path="$.wording",
         )
-    value = unicodedata.normalize("NFKC", wording).casefold()
+    value = unicodedata.normalize("NFKC", wording).casefold().replace("−", "-")
+    value = re.sub(r"(?<!\w)([+-])\s+(?=\d)", r"\1", value)
     value = re.sub(
         r"(?<!\w)(?:[^\W\d_]\.)+[^\W\d_](?:\.)?",
         lambda match: match.group(0).replace(".", ""),
@@ -130,8 +131,43 @@ def _comparable(value: object) -> object:
     return normalize_question(value) if isinstance(value, str) else value
 
 
+def _valid_reuse_identity(value: object) -> bool:
+    if not isinstance(value, Mapping) or value.get("answer_type") not in _ANSWER_TYPES:
+        return False
+    scope = value.get("scope")
+    if not isinstance(scope, Mapping) or set(scope) - {"kind", *_SCOPE_KEYS}:
+        return False
+    kind = scope.get("kind")
+    if kind not in {"global", "company", "role", "job"}:
+        return False
+    if any(
+        key in scope and (not isinstance(scope[key], str) or not scope[key].strip())
+        for key in _SCOPE_KEYS
+    ):
+        return False
+    required_scope_key = _REQUIRED_SCOPE_KEYS.get(str(kind))
+    if required_scope_key and required_scope_key not in scope:
+        return False
+    qualifiers = value.get("qualifiers")
+    if (
+        not isinstance(qualifiers, Mapping)
+        or set(qualifiers) - {key for key, _ in _QUALIFIER_REASONS}
+        or not isinstance(qualifiers.get("negated"), bool)
+    ):
+        return False
+    return not any(
+        key in qualifiers
+        and (not isinstance(qualifiers[key], str) or not qualifiers[key].strip())
+        for key in ("jurisdiction", "time_period", "unit")
+    )
+
+
 def validate_reuse(candidate: Mapping[str, object], proposal: Mapping[str, object]) -> ReuseResult:
     """Validate a supplied candidate; never discover semantic equivalence."""
+    if not _valid_reuse_identity(candidate):
+        return ReuseResult(False, "invalid_candidate")
+    if not _valid_reuse_identity(proposal):
+        return ReuseResult(False, "invalid_proposal")
     if candidate.get("answer_type", _MISSING) != proposal.get("answer_type", _MISSING):
         return ReuseResult(False, "answer_type_mismatch")
     candidate_scope = candidate.get("scope")
@@ -182,7 +218,10 @@ def question_query(value: Mapping[str, object]) -> QuestionQuery:
         raise SchemaValidationError(
             "question_input_invalid: query shape is invalid", reason_code="question_input_invalid"
         )
-    if any(key in scope and not isinstance(scope[key], str) for key in _SCOPE_KEYS):
+    if any(
+        key in scope and (not isinstance(scope[key], str) or not scope[key].strip())
+        for key in _SCOPE_KEYS
+    ):
         raise SchemaValidationError(
             "question_input_invalid: scope is invalid", reason_code="question_input_invalid"
         )
@@ -192,7 +231,8 @@ def question_query(value: Mapping[str, object]) -> QuestionQuery:
             "question_input_invalid: scope key is missing", reason_code="question_input_invalid"
         )
     if any(
-        key in qualifiers and not isinstance(qualifiers[key], str)
+        key in qualifiers
+        and (not isinstance(qualifiers[key], str) or not qualifiers[key].strip())
         for key in ("jurisdiction", "time_period", "unit")
     ):
         raise SchemaValidationError(
@@ -320,54 +360,87 @@ class QuestionMemory:
 
     def sync(self, reviewed: Mapping[str, object]) -> SyncResult:
         self.store.registry.validate("reviewed-answers.v1", reviewed)
-        document = self._document()
-        records = copy.deepcopy(document["questions"])
         entries = reviewed["entries"]
-        if not isinstance(records, list) or not isinstance(entries, list):
+        if not isinstance(entries, list):
             raise SchemaValidationError("schema_validation: invalid document", reason_code="schema_validation")
         results: list[SyncEntryResult] = []
-        for entry in entries:
-            if not isinstance(entry, Mapping):
-                raise SchemaValidationError("schema_validation: invalid entry", reason_code="schema_validation")
-            source_id = entry.get("canonical_source_id")
-            if isinstance(source_id, str):
-                source_records = [
-                    item for item in records if item.get("canonical_id") == source_id
-                ]
-                if not source_records:
-                    raise QuestionMemoryError("canonical_source_missing: unavailable", reason_code="canonical_source_missing")
-                if len(source_records) > 1:
+
+        def transform(document: dict[str, object]) -> Mapping[str, object]:
+            records = document["questions"]
+            if not isinstance(records, list):
+                raise SchemaValidationError(
+                    "schema_validation: invalid document", reason_code="schema_validation"
+                )
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    raise SchemaValidationError(
+                        "schema_validation: invalid entry", reason_code="schema_validation"
+                    )
+                source_id = entry.get("canonical_source_id")
+                if isinstance(source_id, str):
+                    source_records = [
+                        item for item in records if item.get("canonical_id") == source_id
+                    ]
+                    if not source_records:
+                        raise QuestionMemoryError(
+                            "canonical_source_missing: unavailable",
+                            reason_code="canonical_source_missing",
+                        )
+                    if len(source_records) > 1:
+                        raise QuestionMemoryError(
+                            "question_ambiguous: duplicate canonical identity",
+                            reason_code="question_ambiguous",
+                        )
+                    record = source_records[0]
+                    compatibility = validate_reuse(record, entry)
+                    if not compatibility.allowed:
+                        raise QuestionMemoryError(
+                            f"{compatibility.reason_code}: incompatible",
+                            reason_code=compatibility.reason_code,
+                        )
+                    results.append(
+                        SyncEntryResult(source_id, self._apply_entry(record, entry))
+                    )
+                    continue
+                query = question_query(
+                    {
+                        "wording": entry["wording"],
+                        "answer_type": entry["answer_type"],
+                        "scope": entry["scope"],
+                        "qualifiers": entry["qualifiers"],
+                    }
+                )
+                match = self._match_records(records, query)
+                if match.kind == "ambiguous":
                     raise QuestionMemoryError(
-                        "question_ambiguous: duplicate canonical identity",
+                        "question_ambiguous: multiple records",
                         reason_code="question_ambiguous",
                     )
-                record = source_records[0]
-                compatibility = validate_reuse(record, entry)
-                if not compatibility.allowed:
-                    raise QuestionMemoryError(f"{compatibility.reason_code}: incompatible", reason_code=compatibility.reason_code)
-                results.append(SyncEntryResult(source_id, self._apply_entry(record, entry)))
-                continue
-            query = question_query(
-                {
-                    "wording": entry["wording"],
-                    "answer_type": entry["answer_type"],
-                    "scope": entry["scope"],
-                    "qualifiers": entry["qualifiers"],
-                }
-            )
-            match = self._match_records(records, query)
-            if match.kind == "ambiguous":
-                raise QuestionMemoryError("question_ambiguous: multiple records", reason_code="question_ambiguous")
-            if match.canonical_id:
-                record = next(item for item in records if item.get("canonical_id") == match.canonical_id)
-                results.append(SyncEntryResult(match.canonical_id, self._apply_entry(record, entry)))
-                continue
-            canonical_id = canonical_question_id(str(entry["wording"]), str(entry["answer_type"]), entry["scope"])  # type: ignore[arg-type]
-            if any(item.get("canonical_id") == canonical_id for item in records):
-                raise QuestionMemoryError("canonical_id_conflict: identity conflict", reason_code="canonical_id_conflict")
-            records.append(self._new_record(entry, canonical_id))
-            results.append(SyncEntryResult(canonical_id, "created"))
-        replacement = {"schema_version": 1, "questions": records}
-        if replacement != document:
-            self.store.write_yaml(self.path, replacement, "questions.v1")
+                if match.canonical_id:
+                    record = next(
+                        item
+                        for item in records
+                        if item.get("canonical_id") == match.canonical_id
+                    )
+                    results.append(
+                        SyncEntryResult(
+                            match.canonical_id, self._apply_entry(record, entry)
+                        )
+                    )
+                    continue
+                canonical_id = canonical_question_id(
+                    str(entry["wording"]),
+                    str(entry["answer_type"]),
+                    entry["scope"],  # type: ignore[arg-type]
+                )
+                if any(item.get("canonical_id") == canonical_id for item in records):
+                    raise QuestionMemoryError(
+                        "canonical_id_conflict: identity conflict",
+                        reason_code="canonical_id_conflict",
+                    )
+                records.append(self._new_record(entry, canonical_id))
+                results.append(SyncEntryResult(canonical_id, "created"))
+            return {"schema_version": 1, "questions": records}
+
+        self.store.update_yaml(self.path, "questions.v1", transform)
         return SyncResult(tuple(results))

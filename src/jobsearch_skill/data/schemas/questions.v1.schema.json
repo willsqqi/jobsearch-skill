@@ -19,9 +19,9 @@
       "type": "object",
       "properties": {
         "negated": {"type": "boolean"},
-        "jurisdiction": {"type": "string"},
-        "time_period": {"type": "string"},
-        "unit": {"type": "string"}
+        "jurisdiction": {"type": "string", "minLength": 1},
+        "time_period": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1}
       },
       "required": ["negated"],
       "additionalProperties": false

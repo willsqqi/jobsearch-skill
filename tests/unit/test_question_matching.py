@@ -136,7 +136,61 @@ def test_reuse_rejects_scope_kind_without_its_required_key() -> None:
     )
 
     assert result.allowed is False
-    assert result.reason_code == "scope_key_mismatch"
+    assert result.reason_code == "invalid_candidate"
+
+
+@pytest.mark.parametrize(
+    "invalid_candidate",
+    [
+        {},
+        {"answer_type": "unknown", "scope": {"kind": "global"}, "qualifiers": {"negated": False}},
+        {"answer_type": "boolean", "scope": {}, "qualifiers": {"negated": False}},
+        {"answer_type": "boolean", "scope": {"kind": "company"}, "qualifiers": {"negated": False}},
+        {"answer_type": "boolean", "scope": {"kind": "global"}, "qualifiers": {}},
+        {"answer_type": "boolean", "scope": {"kind": "global"}, "qualifiers": {"negated": "false"}},
+        {
+            "answer_type": "boolean",
+            "scope": {"kind": "global"},
+            "qualifiers": {"negated": False, "jurisdiction": ""},
+        },
+        {
+            "answer_type": "boolean",
+            "scope": {"kind": "global"},
+            "qualifiers": {"negated": False, "unexpected": "value"},
+        },
+    ],
+)
+def test_reuse_fails_closed_for_malformed_candidate_identity(
+    invalid_candidate: dict[str, object],
+) -> None:
+    result = validate_reuse(invalid_candidate, proposal())
+
+    assert result.allowed is False
+    assert result.reason_code == "invalid_candidate"
+
+
+@pytest.mark.parametrize(
+    "invalid_proposal",
+    [
+        {},
+        {"answer_type": "unknown", "scope": {"kind": "global"}, "qualifiers": {"negated": False}},
+        {"answer_type": "boolean", "scope": {}, "qualifiers": {"negated": False}},
+        {"answer_type": "boolean", "scope": {"kind": "job"}, "qualifiers": {"negated": False}},
+        {"answer_type": "boolean", "scope": {"kind": "global"}, "qualifiers": {}},
+        {
+            "answer_type": "boolean",
+            "scope": {"kind": "global"},
+            "qualifiers": {"negated": False, "unit": 1},
+        },
+    ],
+)
+def test_reuse_fails_closed_for_malformed_proposal_identity(
+    invalid_proposal: dict[str, object],
+) -> None:
+    result = validate_reuse(question_record(), invalid_proposal)
+
+    assert result.allowed is False
+    assert result.reason_code == "invalid_proposal"
 
 
 @pytest.fixture
