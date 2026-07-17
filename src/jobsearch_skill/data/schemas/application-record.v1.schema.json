@@ -16,7 +16,7 @@
     "analysis_ref": {"type": "string"},
     "artifact_ref": {"type": "string"},
     "applied_at": {"type": "string", "format": "date-time"},
-    "status": {"enum": ["Applied", "Interview", "Offer", "Rejected", "Withdrawn"]},
+    "status": {"const": "Applied"},
     "workday_id": {"type": "string"},
     "updated_at": {"type": "string", "format": "date-time"}
   },

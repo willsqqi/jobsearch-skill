@@ -4,10 +4,13 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 from jobsearch_skill.cli import main
 from jobsearch_skill.errors import StorageError
 from jobsearch_skill.storage import SafeStore
+from jobsearch_skill.jobs import make_job_context
+from jobsearch_skill.schema import SchemaRegistry
 
 
 def test_version_envelope(capsys) -> None:
@@ -289,3 +292,172 @@ def test_cli_preserves_primary_storage_error_when_temp_cleanup_fails(
     assert pointer.read_bytes() == original
     assert "PRIVATE_UNLINK_CANARY" not in captured.out
     assert "/private/temp-file" not in captured.out
+
+
+def _analysis_document(run_id: str, fingerprint: str) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "job_fingerprint": fingerprint,
+        "role_summary": "Synthetic role",
+        "required_qualifications": [],
+        "preferred_qualifications": [],
+        "strong_matches": [],
+        "partial_matches": [],
+        "material_gaps": [],
+        "cv_comparison": [],
+        "recommended_cv": "SWE",
+        "recommendation_rationale": "Synthetic rationale",
+        "customization": {"worthwhile": False, "rationale": "Not needed"},
+        "evidence_references": [],
+    }
+
+
+def _write_yaml(path: Path, value: dict[str, object]) -> None:
+    path.write_text(yaml.safe_dump(value, sort_keys=False), encoding="utf-8")
+
+
+def test_cli_run_lifecycle_emits_versioned_envelopes_and_owned_analysis(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+    context = make_job_context(
+        job_url="https://example.invalid/jobs/7",
+        company="Synthetic Systems",
+        role="Backend Engineer",
+        description="Build APIs",
+    )
+    job_path = tmp_path / "job.yaml"
+    _write_yaml(job_path, context)
+
+    assert main(["--home", str(home), "run", "start", "--job-context", str(job_path)]) == 0
+    started = json.loads(capsys.readouterr().out)
+    assert started["schema_version"] == 1
+    assert started["ok"] is True
+    assert started["command"] == "run.start"
+    run_id = started["result"]["run_id"]
+
+    analysis_path = tmp_path / "transport-analysis.yaml"
+    _write_yaml(analysis_path, _analysis_document(run_id, str(context["job_fingerprint"])))
+    assert main(
+        [
+            "--home",
+            str(home),
+            "run",
+            "analyze",
+            "--run-id",
+            run_id,
+            "--analysis",
+            str(analysis_path),
+        ]
+    ) == 0
+    analyzed = json.loads(capsys.readouterr().out)
+    assert analyzed["result"]["phase"] == "analyzed"
+    assert "transport-analysis" not in analyzed["result"]["analysis_ref"]
+
+    cv = tmp_path / "synthetic.pdf"
+    cv.write_bytes(b"%PDF-1.4 synthetic")
+    assert main(
+        ["--home", str(home), "run", "select-cv", "--run-id", run_id, "--cv", str(cv)]
+    ) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["result"]["phase"] == "cv_selected"
+
+    checkpoint = tmp_path / "checkpoint.yaml"
+    _write_yaml(checkpoint, {"target_phase": "cv_ready"})
+    assert main(
+        ["--home", str(home), "run", "checkpoint", "--run-id", run_id, "--input", str(checkpoint)]
+    ) == 0
+    checkpointed = json.loads(capsys.readouterr().out)
+    assert checkpointed["result"]["phase"] == "cv_ready"
+
+    assert main(["--home", str(home), "run", "show", "--latest-open"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["result"]["run_id"] == run_id
+    assert shown["result"]["phase"] == "cv_ready"
+
+
+def test_cli_application_requires_confirmation_without_mutation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+    context = make_job_context(
+        job_url="https://example.invalid/jobs/7",
+        description="Build APIs",
+    )
+    registry = SchemaRegistry()
+    store = SafeStore(registry, home / "backups")
+    from jobsearch_skill.runs import RunStore
+
+    runs = RunStore(store, home / "runs")
+    run = runs.start(context)
+    runs.save_analysis(run.run_id, _analysis_document(run.run_id, str(context["job_fingerprint"])))
+    runs.select_cv(run.run_id, "SWE")
+    for phase in ("cv_ready", "applying", "review_pending"):
+        runs.checkpoint(run.run_id, {"target_phase": phase})
+    runs.checkpoint(
+        run.run_id,
+        {
+            "target_phase": "submission_pending",
+            "application_url": "https://example.invalid/apply/7",
+        },
+    )
+    applications = home / "applications.csv"
+    original_csv = applications.read_bytes()
+    run_path = home / "runs" / run.run_id / "run.yaml"
+    original_run = run_path.read_bytes()
+
+    assert main(
+        ["--home", str(home), "application", "record", "--run-id", run.run_id]
+    ) != 0
+    rejected = capsys.readouterr()
+    assert rejected.err == ""
+    assert json.loads(rejected.out) == {
+        "schema_version": 1,
+        "ok": False,
+        "command": "application.record",
+        "reason_code": "submission_not_confirmed",
+        "warnings": [],
+    }
+    assert applications.read_bytes() == original_csv
+    assert run_path.read_bytes() == original_run
+
+    assert main(
+        [
+            "--home",
+            str(home),
+            "application",
+            "record",
+            "--run-id",
+            run.run_id,
+            "--confirmed-submitted",
+        ]
+    ) == 0
+    recorded = json.loads(capsys.readouterr().out)
+    assert recorded["result"]["status"] == "Applied"
+    assert runs.get(run.run_id).phase == "submitted_confirmed"
+
+
+def test_cli_run_errors_do_not_leak_private_values_or_paths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / "PRIVATE_RUN_HOME_CANARY" / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+    assert main(
+        ["--home", str(home), "run", "show", "--run-id", "run_PRIVATE_VALUE_CANARY"]
+    ) == 4
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["reason_code"] == "run_not_found"
+    assert "PRIVATE_RUN_HOME_CANARY" not in captured.out
+    assert "PRIVATE_VALUE_CANARY" not in captured.out
+
+    assert main(["--home", str(home), "run", "show", "--run-id", "../PRIVATE_PATH_CANARY"]) == 2
+    unsafe = capsys.readouterr()
+    assert json.loads(unsafe.out)["reason_code"] == "invalid_run_id"
+    assert "PRIVATE_PATH_CANARY" not in unsafe.out

@@ -18,6 +18,7 @@ from jobsearch_skill.storage import SafeStore
 
 
 APPLICATION_FIELDNAMES = (
+    "schema_version",
     "application_id",
     "company",
     "role",
@@ -359,7 +360,10 @@ def _validate_applications(path: Path, registry: SchemaRegistry) -> None:
                 )
             for row in reader:
                 try:
-                    registry.validate("application-record.v1", {"schema_version": 1, **row})
+                    candidate = dict(row)
+                    if candidate.get("schema_version") == "1":
+                        candidate["schema_version"] = 1
+                    registry.validate("application-record.v1", candidate)
                 except SchemaValidationError as error:
                     raise StorageValidationError(
                         "storage_validation: applications row violates its contract",

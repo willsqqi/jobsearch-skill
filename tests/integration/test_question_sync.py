@@ -12,7 +12,9 @@ import yaml
 from jobsearch_skill.cli import main
 from jobsearch_skill.errors import JobsearchError, SchemaValidationError
 from jobsearch_skill.home import bootstrap_private_home
+from jobsearch_skill.jobs import make_job_context
 from jobsearch_skill.questions import QuestionMemory
+from jobsearch_skill.runs import RunStore
 from jobsearch_skill.schema import SchemaRegistry
 from jobsearch_skill.storage import SafeStore
 
@@ -272,16 +274,29 @@ def _write_input(path: Path, document: dict[str, object]) -> None:
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
+def _open_run(home: Path) -> tuple[RunStore, str]:
+    store = SafeStore(SchemaRegistry(), home / "backups")
+    runs = RunStore(store, home / "runs")
+    run = runs.start(
+        make_job_context(
+            job_url="https://example.invalid/jobs/question-sync",
+            description="Synthetic question sync run",
+        )
+    )
+    return runs, run.run_id
+
+
 def test_cli_match_and_sync_emit_one_value_free_versioned_envelope(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     home = tmp_path / ".jobsearch"
     bootstrap_private_home(home, SchemaRegistry())
+    runs, run_id = _open_run(home)
     sync_input = tmp_path / "reviewed.yaml"
-    _write_input(sync_input, reviewed_document())
+    _write_input(sync_input, reviewed_document(run_id=run_id))
 
     assert main(
-        ["--home", str(home), "questions", "sync", "--run-id", "run_synthetic", "--input", str(sync_input)]
+        ["--home", str(home), "questions", "sync", "--run-id", run_id, "--input", str(sync_input)]
     ) == 0
     synced = capsys.readouterr()
     sync_payload = json.loads(synced.out)
@@ -291,7 +306,7 @@ def test_cli_match_and_sync_emit_one_value_free_versioned_envelope(
         "ok": True,
         "command": "questions.sync",
         "result": {
-            "run_id": "run_synthetic",
+            "run_id": run_id,
             "created": 1,
             "updated": 0,
             "unchanged": 0,
@@ -300,6 +315,7 @@ def test_cli_match_and_sync_emit_one_value_free_versioned_envelope(
         "warnings": [],
     }
     assert '"value"' not in synced.out
+    assert runs.get(run_id).data["learning_changes"] == sync_payload["result"]["canonical_ids"]
 
     match_input = tmp_path / "match.json"
     match_input.write_text(
@@ -386,14 +402,61 @@ def test_cli_invalid_reviewed_input_does_not_leak_answer_or_change_questions(
 ) -> None:
     home = tmp_path / ".jobsearch"
     bootstrap_private_home(home, SchemaRegistry())
+    _, run_id = _open_run(home)
     questions = home / "questions.yaml"
     original = questions.read_bytes()
     input_path = tmp_path / "invalid.yaml"
     _write_input(input_path, {"value": "PRIVATE_ANSWER_CANARY"})
 
     assert main(
-        ["--home", str(home), "questions", "sync", "--run-id", "run_synthetic", "--input", str(input_path)]
+        ["--home", str(home), "questions", "sync", "--run-id", run_id, "--input", str(input_path)]
     ) == 3
     captured = capsys.readouterr()
     assert "PRIVATE_ANSWER_CANARY" not in captured.out
+    assert questions.read_bytes() == original
+
+
+def test_cli_sync_requires_existing_nonterminal_run_before_reading_input(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / ".jobsearch"
+    bootstrap_private_home(home, SchemaRegistry())
+    input_path = tmp_path / "reviewed.yaml"
+    input_path.write_text("PRIVATE_UNREAD_CANARY", encoding="utf-8")
+    questions = home / "questions.yaml"
+    original = questions.read_bytes()
+
+    assert main(
+        [
+            "--home",
+            str(home),
+            "questions",
+            "sync",
+            "--run-id",
+            "run_missing",
+            "--input",
+            str(input_path),
+        ]
+    ) == 4
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["reason_code"] == "run_not_found"
+    assert "PRIVATE_UNREAD_CANARY" not in captured.out
+    assert questions.read_bytes() == original
+
+    runs, run_id = _open_run(home)
+    runs.checkpoint(run_id, {"target_phase": "stopped"})
+    assert main(
+        [
+            "--home",
+            str(home),
+            "questions",
+            "sync",
+            "--run-id",
+            run_id,
+            "--input",
+            str(input_path),
+        ]
+    ) == 6
+    terminal = capsys.readouterr()
+    assert json.loads(terminal.out)["reason_code"] == "invalid_transition"
     assert questions.read_bytes() == original

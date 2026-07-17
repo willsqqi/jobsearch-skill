@@ -48,9 +48,16 @@
     },
     "unresolved_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
     "learning_changes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "application_url": {"type": ["string", "null"], "format": "uri"},
+    "application_metadata": {
+      "type": "object",
+      "properties": {"workday_id": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "application_id": {"type": ["string", "null"]},
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"}
   },
-  "required": ["schema_version", "run_id", "job_context", "phase", "selected_cv", "analysis_ref", "generated_artifacts", "completed_page_ids", "pending_manual_actions", "unresolved_fields", "learning_changes", "created_at", "updated_at"],
+  "required": ["schema_version", "run_id", "job_context", "phase", "selected_cv", "analysis_ref", "generated_artifacts", "completed_page_ids", "pending_manual_actions", "unresolved_fields", "learning_changes", "application_url", "application_metadata", "application_id", "created_at", "updated_at"],
   "additionalProperties": false
 }

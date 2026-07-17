@@ -389,10 +389,112 @@ class SafeStore:
                         "storage_validation: CSV row fields do not match the versioned header",
                         reason_code="storage_validation",
                     )
-                self._validate(row_contract, {"schema_version": schema_version, **row})
+                candidate: dict[str, object] = dict(row)
+                if "schema_version" not in candidate:
+                    candidate["schema_version"] = schema_version
+                elif candidate["schema_version"] == str(schema_version):
+                    candidate["schema_version"] = schema_version
+                self._validate(row_contract, candidate)
             stream = io.StringIO(newline="")
             stream.write(f"# schema_version={schema_version}\n")
             writer = csv.DictWriter(stream, fieldnames=expected_fields, lineterminator="\n")
             writer.writeheader()
             writer.writerows(rows)
             self._replace_locked(path, stream.getvalue(), create_backup=True)
+
+    def read_csv(
+        self,
+        path: Path,
+        fieldnames: Sequence[str],
+        row_contract: str,
+        schema_version: int,
+    ) -> list[dict[str, str]]:
+        """Read and validate a private versioned CSV while holding its lock."""
+
+        with self._locked(path):
+            return self._read_csv_locked(path, fieldnames, row_contract, schema_version)
+
+    def _read_csv_locked(
+        self,
+        path: Path,
+        fieldnames: Sequence[str],
+        row_contract: str,
+        schema_version: int,
+    ) -> list[dict[str, str]]:
+        expected_fields = tuple(fieldnames)
+        try:
+            with path.open(encoding="utf-8", newline="") as stream:
+                version_line = stream.readline().rstrip("\r\n")
+                reader = csv.DictReader(stream)
+                if (
+                    version_line != f"# schema_version={schema_version}"
+                    or tuple(reader.fieldnames or ()) != expected_fields
+                ):
+                    raise StorageValidationError(
+                        "document_header: private CSV has an invalid versioned header",
+                        reason_code="document_header",
+                    )
+                rows = [dict(row) for row in reader]
+        except StorageValidationError:
+            raise
+        except (OSError, UnicodeError, csv.Error) as error:
+            raise StorageError(
+                "storage_read: unable to read private CSV",
+                reason_code="storage_read",
+            ) from error
+        for row in rows:
+            candidate: dict[str, object] = dict(row)
+            if candidate.get("schema_version") == str(schema_version):
+                candidate["schema_version"] = schema_version
+            self._validate(row_contract, candidate)
+        return rows
+
+    def update_csv(
+        self,
+        path: Path,
+        fieldnames: Sequence[str],
+        row_contract: str,
+        schema_version: int,
+        transform: Callable[[list[dict[str, str]]], Sequence[Mapping[str, str]]],
+        after_write: Callable[[list[dict[str, str]]], None] | None = None,
+    ) -> list[dict[str, str]]:
+        """Validate and update CSV in one locked read-modify-write transaction."""
+
+        with self._locked(path):
+            source = self._read_csv_locked(path, fieldnames, row_contract, schema_version)
+            try:
+                transformed = transform(copy.deepcopy(source))
+            except JobsearchError:
+                raise
+            except Exception as error:
+                raise StorageError(
+                    "storage_transform: private update transform failed",
+                    reason_code="storage_transform",
+                ) from error
+            expected_fields = tuple(fieldnames)
+            replacement: list[dict[str, str]] = []
+            for value in transformed:
+                row = dict(value)
+                if tuple(row.keys()) != expected_fields:
+                    raise StorageValidationError(
+                        "storage_validation: CSV row fields do not match the versioned header",
+                        reason_code="storage_validation",
+                    )
+                candidate: dict[str, object] = dict(row)
+                if candidate.get("schema_version") == str(schema_version):
+                    candidate["schema_version"] = schema_version
+                self._validate(row_contract, candidate)
+                replacement.append(row)
+            if replacement == source:
+                if after_write is not None:
+                    after_write(replacement)
+                return replacement
+            stream = io.StringIO(newline="")
+            stream.write(f"# schema_version={schema_version}\n")
+            writer = csv.DictWriter(stream, fieldnames=expected_fields, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(replacement)
+            self._replace_locked(path, stream.getvalue(), create_backup=True)
+            if after_write is not None:
+                after_write(replacement)
+            return replacement

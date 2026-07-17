@@ -197,6 +197,7 @@ def test_bootstrap_seeds_valid_empty_structures_and_exact_csv_header(tmp_path: P
     lines = (home / "applications.csv").read_text(encoding="utf-8").splitlines()
     assert lines[0] == "# schema_version=1"
     assert lines[1].split(",") == [
+        "schema_version",
         "application_id",
         "company",
         "role",

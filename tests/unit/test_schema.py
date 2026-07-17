@@ -241,6 +241,9 @@ def test_remaining_contracts_accept_representative_v1_documents(
             "pending_manual_actions": [],
             "unresolved_fields": [],
             "learning_changes": [],
+            "application_url": None,
+            "application_metadata": {},
+            "application_id": None,
             "created_at": timestamp,
             "updated_at": timestamp,
         },
@@ -430,6 +433,30 @@ def test_schema_directory_override_isolated_from_package(tmp_path: Path) -> None
     registry.validate("isolated.v1", {"schema_version": 1})
     with pytest.raises(SchemaValidationError, match="schema_not_found"):
         registry.validate("profile.v1", {"schema_version": 1})
+
+
+def test_application_record_status_is_exactly_applied(schema_registry: SchemaRegistry) -> None:
+    timestamp = "2026-07-17T00:00:00Z"
+    record = {
+        "schema_version": 1,
+        "application_id": "application_synthetic",
+        "company": "Synthetic Systems",
+        "role": "Backend Engineer",
+        "location": "Remote",
+        "url": "https://example.invalid/application",
+        "job_fingerprint": f"sha256:{'0' * 64}",
+        "cv_name": "SWE",
+        "cv_path": "synthetic/resume.pdf",
+        "analysis_ref": "runs/run_synthetic/analysis.yaml",
+        "artifact_ref": "synthetic/resume.pdf",
+        "applied_at": timestamp,
+        "status": "Interview",
+        "workday_id": "",
+        "updated_at": timestamp,
+    }
+
+    with pytest.raises(SchemaValidationError):
+        schema_registry.validate("application-record.v1", record)
 
 
 def test_load_yaml_document_requires_mapping(tmp_path: Path) -> None:

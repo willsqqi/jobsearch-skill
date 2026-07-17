@@ -55,3 +55,39 @@ class CVSelectionError(JobsearchError):
     """A requested CV cannot be selected without exposing private details."""
 
     exit_code = 4
+
+
+class RunNotFoundError(JobsearchError):
+    """A requested resumable run is unavailable."""
+
+    exit_code = 4
+
+
+class AmbiguousRunError(JobsearchError):
+    """Latest-open selection cannot safely choose among multiple runs."""
+
+    exit_code = 4
+
+
+class InvalidTransition(JobsearchError):
+    """A requested run transition is not allowed."""
+
+    exit_code = 6
+
+
+class RunConflictError(JobsearchError):
+    """A repeated run mutation conflicts with persisted state."""
+
+    exit_code = 6
+
+
+class SubmissionNotConfirmed(JobsearchError):
+    """Tracker mutation lacks explicit post-submission confirmation."""
+
+    exit_code = 3
+
+
+class ApplicationConflictError(JobsearchError):
+    """An application identity conflicts with persisted state."""
+
+    exit_code = 6
