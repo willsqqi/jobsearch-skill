@@ -5,14 +5,16 @@ import io
 import json
 import os
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from jobsearch_skill.errors import (
     SchemaValidationError,
@@ -73,6 +75,50 @@ class SafeStore:
                 reason_code="storage_lock",
             ) from error
 
+    @contextmanager
+    def _locked(self, path: Path):
+        lock = self._lock_for(path)
+        try:
+            lock.acquire()
+        except (OSError, Timeout) as error:
+            raise StorageError(
+                "storage_lock: unable to lock private data",
+                reason_code="storage_lock",
+            ) from error
+        try:
+            self._secure_lock(lock)
+            yield
+        finally:
+            try:
+                lock.release()
+            except (OSError, Timeout) as error:
+                raise StorageError(
+                    "storage_lock: unable to release private data lock",
+                    reason_code="storage_lock",
+                ) from error
+
+    def ensure_private_file(self, path: Path) -> None:
+        """Normalize an existing private regular file to mode 0600 without rewriting it."""
+
+        with self._locked(path):
+            try:
+                if path.is_symlink() or not path.is_file():
+                    raise StorageError(
+                        "storage_mode: private data must be a regular file",
+                        reason_code="storage_mode",
+                    )
+                if stat.S_IMODE(path.stat().st_mode) != 0o600:
+                    path.chmod(0o600)
+                if stat.S_IMODE(path.stat().st_mode) != 0o600:
+                    raise OSError("private file mode normalization failed")
+            except StorageError:
+                raise
+            except OSError as error:
+                raise StorageError(
+                    "storage_mode: unable to secure private data",
+                    reason_code="storage_mode",
+                ) from error
+
     def _validate(self, contract: str, value: object) -> None:
         try:
             self.registry.validate(contract, value)
@@ -122,6 +168,9 @@ class SafeStore:
                 stream.write(text)
                 stream.flush()
                 os.fsync(stream.fileno())
+            temporary_path.chmod(0o600)
+            if stat.S_IMODE(temporary_path.stat().st_mode) != 0o600:
+                raise OSError("private temporary file mode is unsafe")
             return temporary_path
         except (OSError, UnicodeError) as error:
             if temporary_path is not None:
@@ -139,7 +188,6 @@ class SafeStore:
                 self._create_backup(path)
             os.replace(temporary_path, path)
             temporary_path = None
-            path.chmod(0o600)
         except StorageError:
             raise
         except OSError as error:
@@ -152,54 +200,43 @@ class SafeStore:
                 temporary_path.unlink(missing_ok=True)
 
     def write_text(self, path: Path, text: str, validator: Callable[[str], None]) -> None:
-        lock = self._lock_for(path)
-        try:
-            with lock:
-                self._secure_lock(lock)
-                try:
-                    validator(text)
-                except SchemaValidationError as error:
-                    raise StorageValidationError(
-                        "storage_validation: replacement violates its contract",
-                        reason_code="storage_validation",
-                        field_path=error.field_path,
-                    ) from error
-                except Exception as error:
-                    raise StorageError(
-                        "storage_validation: replacement validation failed",
-                        reason_code="storage_validation",
-                    ) from error
-                self._replace_locked(path, text, create_backup=True)
-        except (StorageError, StorageValidationError):
-            raise
-        except OSError as error:
-            raise StorageError(
-                "storage_lock: unable to lock private data",
-                reason_code="storage_lock",
-            ) from error
+        with self._locked(path):
+            try:
+                validator(text)
+            except SchemaValidationError as error:
+                raise StorageValidationError(
+                    "storage_validation: replacement violates its contract",
+                    reason_code="storage_validation",
+                    field_path=error.field_path,
+                ) from error
+            except Exception as error:
+                raise StorageError(
+                    "storage_validation: replacement validation failed",
+                    reason_code="storage_validation",
+                ) from error
+            self._replace_locked(path, text, create_backup=True)
 
     def read_yaml(self, path: Path, contract: str) -> dict[str, object]:
-        try:
-            value = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, yaml.YAMLError) as error:
-            raise StorageError(
-                "storage_read: unable to read private YAML",
-                reason_code="storage_read",
-            ) from error
-        if not isinstance(value, dict):
-            raise StorageValidationError(
-                "storage_validation: private YAML is not an object",
-                reason_code="storage_validation",
-            )
-        self._validate(contract, value)
-        return value
+        with self._locked(path):
+            try:
+                value = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, yaml.YAMLError) as error:
+                raise StorageError(
+                    "storage_read: unable to read private YAML",
+                    reason_code="storage_read",
+                ) from error
+            if not isinstance(value, dict):
+                raise StorageValidationError(
+                    "storage_validation: private YAML is not an object",
+                    reason_code="storage_validation",
+                )
+            self._validate(contract, value)
+            return value
 
     def write_yaml(
         self, path: Path, value: Mapping[str, object], contract: str
     ) -> None:
-        lock = self._lock_for(path)
-        with lock:
-            self._secure_lock(lock)
+        with self._locked(path):
             self._validate(contract, value)
             text = yaml.safe_dump(dict(value), sort_keys=False, allow_unicode=True)
             self._replace_locked(path, text, create_backup=True)
@@ -211,9 +248,7 @@ class SafeStore:
         target_contract: str,
         transform: Callable[[dict[str, object]], dict[str, object]],
     ) -> None:
-        lock = self._lock_for(path)
-        with lock:
-            self._secure_lock(lock)
+        with self._locked(path):
             try:
                 source = yaml.safe_load(path.read_text(encoding="utf-8"))
             except (OSError, UnicodeError, yaml.YAMLError) as error:
@@ -245,27 +280,26 @@ class SafeStore:
             self._replace_locked(path, text, create_backup=False)
 
     def read_json(self, path: Path, contract: str) -> dict[str, object]:
-        try:
-            value: Any = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise StorageError(
-                "storage_read: unable to read private JSON",
-                reason_code="storage_read",
-            ) from error
-        if not isinstance(value, dict):
-            raise StorageValidationError(
-                "storage_validation: private JSON is not an object",
-                reason_code="storage_validation",
-            )
-        self._validate(contract, value)
-        return value
+        with self._locked(path):
+            try:
+                value: Any = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                raise StorageError(
+                    "storage_read: unable to read private JSON",
+                    reason_code="storage_read",
+                ) from error
+            if not isinstance(value, dict):
+                raise StorageValidationError(
+                    "storage_validation: private JSON is not an object",
+                    reason_code="storage_validation",
+                )
+            self._validate(contract, value)
+            return value
 
     def write_json(
         self, path: Path, value: Mapping[str, object], contract: str
     ) -> None:
-        lock = self._lock_for(path)
-        with lock:
-            self._secure_lock(lock)
+        with self._locked(path):
             self._validate(contract, value)
             text = json.dumps(dict(value), indent=2, sort_keys=True) + "\n"
             self._replace_locked(path, text, create_backup=True)
@@ -278,9 +312,7 @@ class SafeStore:
         row_contract: str,
         schema_version: int,
     ) -> None:
-        lock = self._lock_for(path)
-        with lock:
-            self._secure_lock(lock)
+        with self._locked(path):
             expected_fields = tuple(fieldnames)
             for row in rows:
                 if tuple(row.keys()) != expected_fields:

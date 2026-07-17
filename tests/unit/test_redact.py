@@ -49,3 +49,58 @@ def test_redactor_recursively_redacts_value_bearing_keys_and_canary_substrings()
         "message": "prefix [REDACTED] suffix",
         "items": [{"phone": "[REDACTED]"}, "[REDACTED]"],
     }
+
+
+def test_redactor_removes_canaries_from_mapping_keys_and_diagnostic_fields() -> None:
+    canary = "PRIVATE_KEY_CANARY"
+    redactor = Redactor([canary])
+    diagnostic = Diagnostic(
+        field_id=f"field.{canary}",
+        decision="ask",
+        reason_code=f"reason_{canary}",
+    )
+    context = {f"prefix-{canary}-suffix": "ordinary identifier"}
+
+    formatted = format_diagnostic(diagnostic, redactor=redactor, context=context)
+    payload = json.loads(formatted)
+
+    assert canary not in formatted
+    assert payload["diagnostic"] == {
+        "field_id": "field.[REDACTED]",
+        "decision": "ask",
+        "reason_code": "reason_[REDACTED]",
+    }
+    assert payload["context"] == {"prefix-[REDACTED]-suffix": "ordinary identifier"}
+
+
+def test_redactor_covers_nested_identity_and_job_values_but_keeps_safe_identifiers() -> None:
+    redactor = Redactor([])
+    value = {
+        "field_id": "workday.personal-information",
+        "identity": {
+            "first_name": "PrivateFirst",
+            "last_name": "PrivateLast",
+        },
+        "job": {
+            "company": "Private Company",
+            "role": "Private Role",
+            "location": "Private Location",
+        },
+        "decision": "fill",
+        "reason_code": "profile_match",
+    }
+
+    assert redactor.redact(value) == {
+        "field_id": "workday.personal-information",
+        "identity": {
+            "first_name": "[REDACTED]",
+            "last_name": "[REDACTED]",
+        },
+        "job": {
+            "company": "[REDACTED]",
+            "role": "[REDACTED]",
+            "location": "[REDACTED]",
+        },
+        "decision": "fill",
+        "reason_code": "profile_match",
+    }

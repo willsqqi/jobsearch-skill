@@ -12,14 +12,19 @@ _VALUE_KEYS = {
     "answer",
     "authorization",
     "compensation",
+    "company",
     "cv_path",
     "email",
+    "first_name",
     "full_name",
     "home",
+    "last_name",
+    "location",
     "name",
     "path",
     "phone",
     "private_home",
+    "role",
     "salary",
     "secret",
     "token",
@@ -55,7 +60,9 @@ class Redactor:
     def redact(self, value: Any) -> Any:
         if isinstance(value, dict):
             return {
-                key: REDACTED if self._value_bearing(key) else self.redact(item)
+                self._redact_text(key) if isinstance(key, str) else key: (
+                    REDACTED if self._value_bearing(key) else self.redact(item)
+                )
                 for key, item in value.items()
             }
         if isinstance(value, list):
@@ -75,5 +82,5 @@ def format_diagnostic(
 ) -> str:
     payload: dict[str, object] = {"diagnostic": asdict(diagnostic)}
     if context is not None:
-        payload["context"] = redactor.redact(context)
-    return json.dumps(payload, sort_keys=True)
+        payload["context"] = context
+    return json.dumps(redactor.redact(payload), sort_keys=True)

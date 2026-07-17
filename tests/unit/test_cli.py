@@ -1,4 +1,5 @@
 import json
+import csv
 from pathlib import Path
 
 from jobsearch_skill.cli import main
@@ -98,3 +99,54 @@ def test_cli_usage_error_is_one_json_envelope(capsys) -> None:
         "reason_code": "invalid_arguments",
         "status": "error",
     }
+
+
+def test_cli_csv_open_failure_is_safe_storage_error(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    home = tmp_path / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+    applications = home / "applications.csv"
+    original_open = Path.open
+
+    def fail_applications_open(path: Path, *args, **kwargs):
+        if path == applications:
+            raise OSError("PRIVATE_OPEN_CANARY /private/applications.csv")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_applications_open)
+
+    assert main(["--home", str(home), "validate"]) == 6
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "field_path": "$",
+        "reason_code": "storage_read",
+        "status": "error",
+    }
+    assert "PRIVATE_OPEN_CANARY" not in captured.out
+    assert "/private/applications.csv" not in captured.out
+
+
+def test_cli_csv_parser_failure_is_safe_storage_error(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    home = tmp_path / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+
+    def fail_reader(*args, **kwargs):
+        raise csv.Error("PRIVATE_PARSER_CANARY")
+
+    monkeypatch.setattr("jobsearch_skill.home.csv.DictReader", fail_reader)
+
+    assert main(["--home", str(home), "validate"]) == 6
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "field_path": "$",
+        "reason_code": "storage_read",
+        "status": "error",
+    }
+    assert "PRIVATE_PARSER_CANARY" not in captured.out

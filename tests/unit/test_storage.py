@@ -5,8 +5,9 @@ import stat
 from pathlib import Path
 
 import pytest
+from filelock import FileLock
 
-from jobsearch_skill.errors import SchemaValidationError
+from jobsearch_skill.errors import SchemaValidationError, StorageError
 from jobsearch_skill.schema import SchemaRegistry
 from jobsearch_skill.storage import SafeStore
 
@@ -169,4 +170,61 @@ def test_rewrite_csv_validates_every_row_before_replacing(
         "# schema_version=1",
         ",".join(fields),
     ]
+    assert not list(path.parent.glob("*.tmp"))
+
+
+def test_lock_acquisition_failure_is_normalized_without_path_or_value(
+    store: SafeStore, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_acquire(*args: object, **kwargs: object) -> None:
+        raise OSError("PRIVATE_LOCK_CANARY /private/candidate/questions.yaml")
+
+    monkeypatch.setattr(FileLock, "acquire", fail_acquire)
+
+    with pytest.raises(StorageError) as error:
+        store.write_yaml(path, valid_questions_document(), "questions.v1")
+
+    assert error.value.exit_code == 6
+    assert error.value.reason_code == "storage_lock"
+    assert "PRIVATE_LOCK_CANARY" not in str(error.value)
+    assert "/private/candidate" not in str(error.value)
+
+
+def test_lock_release_failure_is_normalized_without_path_or_value(
+    store: SafeStore, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_release(*args: object, **kwargs: object) -> None:
+        raise OSError("PRIVATE_RELEASE_CANARY /private/candidate/questions.yaml")
+
+    monkeypatch.setattr(FileLock, "release", fail_release)
+
+    with pytest.raises(StorageError) as error:
+        store.write_yaml(path, valid_questions_document(), "questions.v1")
+
+    assert error.value.exit_code == 6
+    assert error.value.reason_code == "storage_lock"
+    assert "PRIVATE_RELEASE_CANARY" not in str(error.value)
+    assert "/private/candidate" not in str(error.value)
+
+
+def test_temp_permission_failure_preserves_original_without_residue(
+    store: SafeStore, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.write_yaml(path, valid_questions_document(), "questions.v1")
+    original = path.read_bytes()
+    original_chmod = Path.chmod
+
+    def fail_temp_chmod(candidate: Path, mode: int) -> None:
+        if candidate.name.endswith(".tmp"):
+            raise OSError("PRIVATE_CHMOD_CANARY")
+        original_chmod(candidate, mode)
+
+    monkeypatch.setattr(Path, "chmod", fail_temp_chmod)
+
+    with pytest.raises(StorageError) as error:
+        store.write_yaml(path, populated_questions_document(), "questions.v1")
+
+    assert error.value.exit_code == 6
+    assert "PRIVATE_CHMOD_CANARY" not in str(error.value)
+    assert path.read_bytes() == original
     assert not list(path.parent.glob("*.tmp"))

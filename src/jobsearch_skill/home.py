@@ -316,6 +316,7 @@ def bootstrap_private_home(home: Path, registry: SchemaRegistry) -> list[Path]:
     for filename, value, contract in documents:
         path = resolved_home / filename
         if path.exists():
+            store.ensure_private_file(path)
             store.read_yaml(path, contract)
         else:
             store.write_yaml(path, value, contract)
@@ -329,6 +330,7 @@ def bootstrap_private_home(home: Path, registry: SchemaRegistry) -> list[Path]:
             1,
         )
     else:
+        store.ensure_private_file(applications)
         _validate_applications(applications, registry)
     return [
         *(resolved_home / filename for filename, _, _ in documents),
@@ -360,9 +362,9 @@ def _validate_applications(path: Path, registry: SchemaRegistry) -> None:
                         field_path=error.field_path,
                     ) from error
     except (OSError, UnicodeError, csv.Error) as error:
-        raise SchemaValidationError(
-            "document_parse: unable to read applications CSV",
-            reason_code="document_parse",
+        raise StorageValidationError(
+            "storage_read: unable to read applications CSV",
+            reason_code="storage_read",
         ) from error
 
 

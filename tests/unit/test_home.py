@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jobsearch_skill.errors import ConfigurationError
+from jobsearch_skill.errors import ConfigurationError, StorageError
 from jobsearch_skill.home import (
     bootstrap_private_home,
     configure_private_home,
@@ -231,3 +231,54 @@ def test_ready_validation_returns_only_missing_field_paths(tmp_path: Path) -> No
     assert missing
     assert all(field.startswith("$.") for field in missing)
     assert "PRIVATE_READY_CANARY" not in repr(missing)
+
+
+def test_bootstrap_normalizes_all_existing_data_modes_without_changing_bytes(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / ".jobsearch"
+    registry = SchemaRegistry()
+    bootstrap_private_home(home, registry)
+    paths = [
+        home / filename
+        for filename in ("profile.yaml", "preferences.yaml", "questions.yaml", "applications.csv")
+    ]
+    original = {path: path.read_bytes() for path in paths}
+    for path in paths:
+        path.chmod(0o644)
+        path.with_name(f"{path.name}.lock").unlink()
+
+    bootstrap_private_home(home, registry)
+
+    for path in paths:
+        assert path.read_bytes() == original[path]
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(path.with_name(f"{path.name}.lock").stat().st_mode) == 0o600
+    for directory in (home, home / "generated", home / "runs", home / "backups", home / "logs"):
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700
+
+
+def test_bootstrap_mode_normalization_failure_is_safe_and_preserves_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / ".jobsearch"
+    registry = SchemaRegistry()
+    bootstrap_private_home(home, registry)
+    profile = home / "profile.yaml"
+    original = profile.read_bytes()
+    profile.chmod(0o644)
+    original_chmod = Path.chmod
+
+    def fail_profile_chmod(path: Path, mode: int) -> None:
+        if path == profile:
+            raise OSError("PRIVATE_MODE_CANARY")
+        original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", fail_profile_chmod)
+
+    with pytest.raises(StorageError) as error:
+        bootstrap_private_home(home, registry)
+
+    assert error.value.exit_code == 6
+    assert "PRIVATE_MODE_CANARY" not in str(error.value)
+    assert profile.read_bytes() == original
