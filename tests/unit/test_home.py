@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import os
+import stat
+import tomllib
 from pathlib import Path
 
 import pytest
 
 from jobsearch_skill.errors import ConfigurationError
 from jobsearch_skill.home import (
+    bootstrap_private_home,
+    configure_private_home,
     default_config_path,
     resolve_private_home,
+    validate_private_documents,
     validate_private_home,
 )
+from jobsearch_skill.schema import SchemaRegistry
+from jobsearch_skill.storage import SafeStore
 
 
 def _write_pointer(path: Path, home: Path, *, mode: int = 0o600) -> None:
@@ -126,3 +133,101 @@ def test_pointer_symlink_is_rejected(tmp_path: Path) -> None:
     pointer.symlink_to(target)
     with pytest.raises(ConfigurationError, match="pointer_symlink"):
         resolve_private_home(None, repo, pointer, environ={})
+
+
+def test_configure_and_bootstrap_use_private_atomic_files(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    private_home = tmp_path / "cv-root" / ".jobsearch"
+    config_parent = tmp_path / "config"
+    config_parent.mkdir(mode=0o755)
+    pointer = config_parent / "jobsearch.toml"
+
+    configured = configure_private_home(private_home, pointer, repo_root)
+    created = bootstrap_private_home(private_home, SchemaRegistry())
+
+    assert configured == private_home.resolve()
+    assert {path.name for path in created} >= {
+        "profile.yaml",
+        "preferences.yaml",
+        "questions.yaml",
+        "applications.csv",
+        "generated",
+        "runs",
+        "backups",
+        "logs",
+    }
+    assert tomllib.loads(pointer.read_text(encoding="utf-8")) == {
+        "private_home": str(private_home.resolve())
+    }
+    assert stat.S_IMODE(config_parent.stat().st_mode) == 0o755
+    assert stat.S_IMODE(pointer.stat().st_mode) == 0o600
+    assert stat.S_IMODE(private_home.stat().st_mode) == 0o700
+    for directory in ("generated", "runs", "backups", "logs"):
+        assert stat.S_IMODE((private_home / directory).stat().st_mode) == 0o700
+    for filename in ("profile.yaml", "preferences.yaml", "questions.yaml", "applications.csv"):
+        assert stat.S_IMODE((private_home / filename).stat().st_mode) == 0o600
+
+
+def test_bootstrap_is_idempotent_and_never_overwrites_existing_profile(tmp_path: Path) -> None:
+    home = tmp_path / ".jobsearch"
+    registry = SchemaRegistry()
+    bootstrap_private_home(home, registry)
+    profile_path = home / "profile.yaml"
+    profile = SafeStore(registry, home / "backups").read_yaml(profile_path, "profile.v1")
+    profile["identity"] = {"full_name": "PRIVATE_PROFILE_CANARY"}
+    SafeStore(registry, home / "backups").write_yaml(profile_path, profile, "profile.v1")
+
+    bootstrap_private_home(home, registry)
+
+    assert SafeStore(registry, home / "backups").read_yaml(
+        profile_path, "profile.v1"
+    )["identity"] == {"full_name": "PRIVATE_PROFILE_CANARY"}
+
+
+def test_bootstrap_seeds_valid_empty_structures_and_exact_csv_header(tmp_path: Path) -> None:
+    home = tmp_path / ".jobsearch"
+    registry = SchemaRegistry()
+    bootstrap_private_home(home, registry)
+    store = SafeStore(registry, home / "backups")
+
+    store.read_yaml(home / "profile.yaml", "profile.v1")
+    store.read_yaml(home / "preferences.yaml", "preferences.v1")
+    store.read_yaml(home / "questions.yaml", "questions.v1")
+    lines = (home / "applications.csv").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "# schema_version=1"
+    assert lines[1].split(",") == [
+        "application_id",
+        "company",
+        "role",
+        "location",
+        "url",
+        "job_fingerprint",
+        "cv_name",
+        "cv_path",
+        "analysis_ref",
+        "artifact_ref",
+        "applied_at",
+        "status",
+        "workday_id",
+        "updated_at",
+    ]
+    public_text = "\n".join(path.read_text(encoding="utf-8") for path in home.glob("*.yaml"))
+    assert "Avery Example" not in public_text
+    assert "Synthetic Systems" not in public_text
+
+
+def test_ready_validation_returns_only_missing_field_paths(tmp_path: Path) -> None:
+    home = tmp_path / ".jobsearch"
+    registry = SchemaRegistry()
+    bootstrap_private_home(home, registry)
+    profile_path = home / "profile.yaml"
+    profile = SafeStore(registry, home / "backups").read_yaml(profile_path, "profile.v1")
+    profile["identity"] = {"full_name": "PRIVATE_READY_CANARY"}
+    SafeStore(registry, home / "backups").write_yaml(profile_path, profile, "profile.v1")
+
+    missing = validate_private_documents(home, registry, ready=True)
+
+    assert missing
+    assert all(field.startswith("$.") for field in missing)
+    assert "PRIVATE_READY_CANARY" not in repr(missing)

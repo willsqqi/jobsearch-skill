@@ -72,7 +72,16 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    completed = subprocess.run([str(runtime.python), "-m", "jobsearch_skill", *command_args])
+    completed = subprocess.run(
+        [
+            str(runtime.python),
+            "-m",
+            "jobsearch_skill",
+            "--home",
+            str(private_home),
+            *command_args,
+        ]
+    )
     return completed.returncode
 
 

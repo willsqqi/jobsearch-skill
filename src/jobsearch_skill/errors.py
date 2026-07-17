@@ -25,3 +25,15 @@ class SchemaValidationError(JobsearchError):
     def __init__(self, message: str, *, reason_code: str, field_path: str = "$") -> None:
         super().__init__(message, reason_code=reason_code)
         self.field_path = field_path
+
+
+class StorageError(JobsearchError):
+    """A private storage operation failed without exposing stored values."""
+
+    exit_code = 6
+
+
+class StorageValidationError(SchemaValidationError):
+    """A storage write failed validation and is safe to catch as schema failure."""
+
+    exit_code = 6

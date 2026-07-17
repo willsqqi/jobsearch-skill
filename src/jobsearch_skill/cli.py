@@ -4,17 +4,76 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from . import __version__
+from .errors import JobsearchError
+from .home import (
+    bootstrap_private_home,
+    configure_private_home,
+    default_config_path,
+    resolve_private_home,
+    validate_private_documents,
+)
+from .schema import SchemaRegistry
+
+
+class _InvalidArguments(Exception):
+    pass
+
+
+class _SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise _InvalidArguments from None
+
+
+def _emit(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, sort_keys=True))
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the Jobsearch command-line interface."""
-    parser = argparse.ArgumentParser(prog="jobsearch")
+    parser = _SafeArgumentParser(prog="jobsearch")
+    parser.add_argument("--home", type=Path)
     parser.add_argument("--version", action="store_true", help="Print the Jobsearch version.")
-    args = parser.parse_args(argv)
+    commands = parser.add_subparsers(dest="command")
+    configure = commands.add_parser("configure")
+    configure.add_argument("private_home", type=Path)
+    configure.add_argument("--config", type=Path)
+    commands.add_parser("bootstrap")
+    validate = commands.add_parser("validate")
+    validate.add_argument("--ready", action="store_true")
+    try:
+        args = parser.parse_args(argv)
+    except _InvalidArguments:
+        _emit({"reason_code": "invalid_arguments", "status": "error"})
+        return 2
     if args.version:
-        print(json.dumps({"command": "version", "version": __version__}))
+        _emit({"command": "version", "version": __version__})
         return 0
-    parser.print_help()
-    return 0
+    registry = SchemaRegistry()
+    try:
+        if args.command == "configure":
+            config_path = args.config or default_config_path()
+            configure_private_home(args.private_home, config_path, Path.cwd())
+            _emit({"command": "configure", "status": "ok"})
+            return 0
+        if args.command in {"bootstrap", "validate"}:
+            home = resolve_private_home(args.home, Path.cwd(), default_config_path())
+            if args.command == "bootstrap":
+                bootstrap_private_home(home, registry)
+                _emit({"command": "bootstrap", "status": "ok"})
+                return 0
+            missing = validate_private_documents(home, registry, ready=args.ready)
+            status = "incomplete" if missing else "ok"
+            _emit({"command": "validate", "missing_fields": missing, "status": status})
+            return 3 if missing else 0
+        _emit({"reason_code": "command_missing", "status": "error"})
+        return 2
+    except JobsearchError as error:
+        payload: dict[str, object] = {"reason_code": error.reason_code, "status": "error"}
+        field_path = getattr(error, "field_path", None)
+        if isinstance(field_path, str):
+            payload["field_path"] = field_path
+        _emit(payload)
+        return error.exit_code

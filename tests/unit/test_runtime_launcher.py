@@ -1,6 +1,7 @@
 import importlib.machinery
 import importlib.util
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,3 +39,50 @@ def test_launcher_reads_local_pointer(monkeypatch, tmp_path, launcher_module) ->
     os.chmod(pointer, 0o600)
     monkeypatch.delenv("JOBSEARCH_HOME", raising=False)
     assert launcher_module.resolve_home(pointer) == configured_home
+
+
+def test_launcher_forwards_resolved_home_to_installed_package(
+    monkeypatch, tmp_path, launcher_module
+) -> None:
+    home = tmp_path / "configured"
+    python = home / "runtime" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\n")
+    python.chmod(0o700)
+    calls: list[list[str]] = []
+
+    def run(command):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(launcher_module.subprocess, "run", run)
+
+    assert launcher_module.main(["--home", str(home), "bootstrap"]) == 0
+    assert calls == [
+        [str(python), "-m", "jobsearch_skill", "--home", str(home.resolve()), "bootstrap"]
+    ]
+
+
+def test_launcher_forwards_pointer_selected_home(monkeypatch, tmp_path, launcher_module) -> None:
+    home = tmp_path / "pointer-selected"
+    python = home / "runtime" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\n")
+    python.chmod(0o700)
+    pointer = tmp_path / "pointer"
+    pointer.write_text(str(home), encoding="utf-8")
+    pointer.chmod(0o600)
+    calls: list[list[str]] = []
+
+    def run(command):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.delenv("JOBSEARCH_HOME", raising=False)
+    monkeypatch.setattr(launcher_module, "DEFAULT_HOME_POINTER", pointer)
+    monkeypatch.setattr(launcher_module.subprocess, "run", run)
+
+    assert launcher_module.main(["validate"]) == 0
+    assert calls == [
+        [str(python), "-m", "jobsearch_skill", "--home", str(home.resolve()), "validate"]
+    ]
