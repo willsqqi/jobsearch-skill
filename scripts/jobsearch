@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Launch Jobsearch from its installed private runtime only."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import stat
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_HOME_POINTER = PLUGIN_ROOT / ".jobsearch-home"
+
+
+@dataclass(frozen=True)
+class RuntimeResolution:
+    ok: bool
+    reason_code: str | None = None
+    python: Path | None = None
+
+
+def resolve_home(
+    pointer_path: Path | None = None,
+    explicit_home: str | Path | None = None,
+) -> Path | None:
+    """Resolve a private home without ever choosing one inside the checkout."""
+    selected = explicit_home or os.environ.get("JOBSEARCH_HOME")
+    if selected:
+        return Path(selected).expanduser().resolve()
+
+    pointer = pointer_path or DEFAULT_HOME_POINTER
+    try:
+        if not pointer.is_file() or stat.S_IMODE(pointer.stat().st_mode) != 0o600:
+            return None
+        configured_home = pointer.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return Path(configured_home).expanduser().resolve() if configured_home else None
+
+
+def resolve_runtime(private_home: Path) -> RuntimeResolution:
+    """Find the runtime interpreter, never consulting a source-checkout virtualenv."""
+    runtime_python = private_home / "runtime" / "bin" / "python"
+    if not runtime_python.is_file() or not os.access(runtime_python, os.X_OK):
+        return RuntimeResolution(ok=False, reason_code="runtime_not_installed")
+    return RuntimeResolution(ok=True, python=runtime_python)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Invoke the installed Jobsearch package from its private runtime."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--home")
+    options, command_args = parser.parse_known_args(argv)
+    private_home = resolve_home(explicit_home=options.home)
+    if private_home is None:
+        print(
+            "Jobsearch private runtime is not configured. "
+            "Run scripts/install-runtime --home <private-home> first.",
+            file=sys.stderr,
+        )
+        return 2
+
+    runtime = resolve_runtime(private_home)
+    if not runtime.ok:
+        print(
+            "Jobsearch private runtime is not installed. "
+            "Run scripts/install-runtime --home <private-home> first.",
+            file=sys.stderr,
+        )
+        return 2
+    completed = subprocess.run([str(runtime.python), "-m", "jobsearch_skill", *command_args])
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

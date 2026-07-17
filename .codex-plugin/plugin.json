@@ -1,0 +1,25 @@
+{
+  "name": "jobsearch-skill",
+  "version": "0.1.0",
+  "description": "A private, local-first job application workflow for Codex.",
+  "author": {
+    "name": "willsqqi"
+  },
+  "homepage": "https://github.com/willsqqi/jobsearch-skill",
+  "repository": "https://github.com/willsqqi/jobsearch-skill",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Jobsearch",
+    "shortDescription": "Run a private, local-first job application workflow.",
+    "longDescription": "Jobsearch keeps job-search data in a private local home while helping you prepare applications.",
+    "developerName": "willsqqi",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Apply to this job.",
+      "Analyze this job.",
+      "Continue the application."
+    ]
+  }
+}
