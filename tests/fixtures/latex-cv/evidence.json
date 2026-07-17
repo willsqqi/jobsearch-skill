@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "run_id": "run_synthetic",
   "cv_name": "Avery Example CV",
   "source_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "source_hashes": [],

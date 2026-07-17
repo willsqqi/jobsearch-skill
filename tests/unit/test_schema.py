@@ -59,6 +59,84 @@ def test_every_declared_object_shape_is_closed() -> None:
         inspect(schema, contract)
 
 
+@pytest.mark.parametrize(
+    "source_hashes",
+    [
+        {},
+        {"../resume.tex": "0" * 64},
+        {"/resume.tex": "0" * 64},
+        {"nested\\resume.tex": "0" * 64},
+        {"nested//resume.tex": "0" * 64},
+        {"nested/": "0" * 64},
+        {"-e.tex": "0" * 64},
+        {"nested/-e.tex": "0" * 64},
+        {"resume.tex": "not-a-digest"},
+    ],
+)
+def test_cv_manifest_rejects_empty_or_unsafe_source_hashes(
+    schema_registry: SchemaRegistry, source_hashes: dict[str, str]
+) -> None:
+    timestamp = "2026-07-17T00:00:00Z"
+    document = {
+        "schema_version": 1,
+        "run_id": "run_synthetic",
+        "source_cv_name": "Synthetic CV",
+        "source_hash": "0" * 64,
+        "source_hashes": source_hashes,
+        "job_fingerprint": f"sha256:{'0' * 64}",
+        "copied_files": ["resume.tex"],
+        "expected_tex": "resume.tex",
+        "expected_pdf": None,
+        "status": "prepared",
+        "output_pdf": None,
+        "verification": None,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+    with pytest.raises(SchemaValidationError):
+        schema_registry.validate("cv-manifest.v1", document)
+
+
+@pytest.mark.parametrize("contract", ["cv-evidence.v1", "cv-facts.v1"])
+def test_cv_source_contracts_reject_option_like_references(
+    schema_registry: SchemaRegistry, contract: str
+) -> None:
+    digest = "0" * 64
+    common = {
+        "schema_version": 1,
+        "run_id": "run_synthetic",
+        "cv_name": "Synthetic CV",
+        "source_hash": digest,
+        "source_hashes": [{"source_ref": "-e.tex", "sha256": digest}],
+    }
+    if contract == "cv-evidence.v1":
+        document = {
+            **common,
+            "sources": [
+                {"source_ref": "-e.tex", "kind": "tex", "text": "Avery Example"}
+            ],
+            "created_at": "2026-07-17T00:00:00Z",
+        }
+    else:
+        document = {
+            **common,
+            "identity": {
+                "full_name": {
+                    "value": "Avery Example",
+                    "evidence_anchor": "Avery Example",
+                }
+            },
+            "education": [],
+            "employment": [],
+            "skills": [],
+            "projects": [],
+        }
+
+    with pytest.raises(SchemaValidationError):
+        schema_registry.validate(contract, document)
+
+
 def test_key_contracts_expose_every_approved_category() -> None:
     schema_files = resources.files("jobsearch_skill.data.schemas")
     expected = {
@@ -297,6 +375,7 @@ def test_remaining_contracts_accept_representative_v1_documents(
         },
         "cv-facts.v1": {
             "schema_version": 1,
+            "run_id": "run_synthetic",
             "cv_name": "Synthetic Systems",
             "source_hash": digest,
             "source_hashes": [{"source_ref": "resume.tex", "sha256": digest}],
@@ -353,7 +432,6 @@ def test_remaining_contracts_accept_representative_v1_documents(
             "schema_version": 1,
             "run_id": "run_synthetic",
             "source_cv_name": "Synthetic Systems",
-            "source_root": "synthetic-cv",
             "source_hash": digest,
             "source_hashes": {"resume.tex": digest},
             "job_fingerprint": f"sha256:{digest}",

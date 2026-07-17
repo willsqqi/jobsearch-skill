@@ -13,7 +13,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "source_ref": {"type": "string", "minLength": 1},
+          "source_ref": {"type": "string", "pattern": "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$"},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         },
         "required": ["source_ref", "sha256"],
@@ -27,7 +27,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "source_ref": {"type": "string", "minLength": 1},
+          "source_ref": {"type": "string", "pattern": "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$"},
           "kind": {"enum": ["tex", "pdf"]},
           "text": {"type": "string", "minLength": 1}
         },

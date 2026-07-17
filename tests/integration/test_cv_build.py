@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
+import yaml
 from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from jobsearch_skill.cli import main
 from jobsearch_skill.cv import CVRegistry, CVService
@@ -16,6 +20,31 @@ from jobsearch_skill.jobs import make_job_context
 from jobsearch_skill.runs import RunStore
 from jobsearch_skill.schema import SchemaRegistry
 from jobsearch_skill.storage import SafeStore
+
+
+def _write_text_pdf(path: Path, text: str) -> None:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    resources = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {NameObject("/F1"): writer._add_object(font)}
+            )
+        }
+    )
+    page[NameObject("/Resources")] = resources
+    content = DecodedStreamObject()
+    content.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii"))
+    page[NameObject("/Contents")] = writer._add_object(content)
+    with path.open("wb") as stream:
+        writer.write(stream)
 
 
 def _analysis(run_id: str, fingerprint: str) -> dict[str, object]:
@@ -46,6 +75,8 @@ def build_setup(tmp_path: Path):
     fixture_root = Path(__file__).parents[1] / "fixtures" / "latex-cv"
     tex = root / "resume.tex"
     tex.write_bytes((fixture_root / "resume.tex").read_bytes())
+    pdf = root / "resume.pdf"
+    _write_text_pdf(pdf, "Avery Example original declared PDF")
     original_hash = hashlib.sha256(tex.read_bytes()).hexdigest()
     schemas = SchemaRegistry()
     store = SafeStore(schemas, home / "backups")
@@ -58,6 +89,7 @@ def build_setup(tmp_path: Path):
                 "name": "Avery Example CV",
                 "root": "cvs/avery",
                 "tex": "resume.tex",
+                "pdf": "resume.pdf",
                 "assets": [],
             }
         ],
@@ -84,11 +116,12 @@ def build_setup(tmp_path: Path):
     runs.save_analysis(run.run_id, _analysis(run.run_id, str(context["job_fingerprint"])))
     run = runs.select_cv(
         run.run_id,
-        {"name": selection.name, "path": str(tex), "customized": True},
+        {"name": selection.name, "path": str(pdf), "customized": True},
     )
     service = CVService(home, store, runs, registry)
     evidence = service.evidence(run.run_id, selection)
     facts = json.loads((fixture_root / "evidence.json").read_text(encoding="utf-8"))
+    facts["run_id"] = run.run_id
     facts["source_hash"] = evidence.source_hash
     facts["source_hashes"] = [
         {"source_ref": ref, "sha256": digest}
@@ -116,17 +149,127 @@ def test_build_creates_verified_pdf_without_mutating_original(build_setup) -> No
     assert manifest["verification"]["identity_present"] is True
 
 
+def test_build_preserves_same_stem_declared_pdf_and_uses_separate_output(
+    build_setup,
+) -> None:
+    service, selection, run, prepared, _, _ = build_setup
+    assert selection.pdf is not None and prepared.pdf is not None
+    original_pdf_hash = hashlib.sha256(selection.pdf.read_bytes()).hexdigest()
+    prepared_pdf_hash = hashlib.sha256(prepared.pdf.read_bytes()).hexdigest()
+
+    result = service.build(run.run_id)
+
+    assert result.pdf != prepared.pdf
+    assert result.pdf.relative_to(prepared.root).as_posix() == "output/resume.pdf"
+    assert hashlib.sha256(selection.pdf.read_bytes()).hexdigest() == original_pdf_hash
+    assert hashlib.sha256(prepared.pdf.read_bytes()).hexdigest() == prepared_pdf_hash
+    assert prepared.manifest["source_hashes"]["resume.pdf"] == prepared_pdf_hash
+    repeated = service.build(run.run_id)
+    assert repeated.pdf == result.pdf
+
+
+def test_build_keeps_declared_source_immutable_while_compiling(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    assert prepared.pdf is not None
+    declared_pdf_hash = hashlib.sha256(prepared.pdf.read_bytes()).hexdigest()
+    actual_run = service._run_compiler
+    observed_cwd: Path | None = None
+
+    def recording_run(command, *, cwd, env):
+        nonlocal observed_cwd
+        observed_cwd = Path(cwd)
+        assert prepared.pdf is not None and prepared.pdf.exists()
+        assert hashlib.sha256(prepared.pdf.read_bytes()).hexdigest() == declared_pdf_hash
+        return actual_run(command, cwd=cwd, env=env)
+
+    monkeypatch.setattr(service, "_run_compiler", recording_run)
+
+    service.build(run.run_id)
+
+    assert observed_cwd is not None
+    assert observed_cwd != prepared.source_dir
+    assert observed_cwd.is_relative_to(prepared.root)
+    assert not observed_cwd.exists()
+    assert hashlib.sha256(prepared.pdf.read_bytes()).hexdigest() == declared_pdf_hash
+
+
+def test_build_removes_stale_compiler_workspace_before_running(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    stale_workspace = prepared.root / ".compiler-work-stale"
+    stale_workspace.mkdir(mode=0o700)
+    stale_log = stale_workspace / "resume.log"
+    stale_log.write_text("RAW_STALE_COMPILER_CANARY", encoding="utf-8")
+    stale_log.chmod(0o600)
+    actual_run = service._run_compiler
+
+    def recording_run(command, *, cwd, env):
+        assert not stale_workspace.exists()
+        return actual_run(command, cwd=cwd, env=env)
+
+    monkeypatch.setattr(service, "_run_compiler", recording_run)
+
+    service.build(run.run_id)
+
+    assert not stale_workspace.exists()
+    assert not list(prepared.root.glob(".compiler-work-*"))
+
+
+def test_build_rejects_stale_compiler_workspace_symlink_without_following(
+    build_setup, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    outside = tmp_path / "outside-workspace"
+    outside.mkdir()
+    canary = outside / "must-remain"
+    canary.write_text("outside", encoding="utf-8")
+    stale_link = prepared.root / ".compiler-work-stale"
+    stale_link.symlink_to(outside, target_is_directory=True)
+
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("compiler must not run with an unsafe stale workspace")
+
+    monkeypatch.setattr(service, "_run_compiler", unexpected_run)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_generated_output_unsafe"
+    assert canary.read_text(encoding="utf-8") == "outside"
+    assert stale_link.is_symlink()
+
+
 def test_build_uses_exact_safe_latexmk_invocation(build_setup, monkeypatch) -> None:
     service, _, run, prepared, _, _ = build_setup
-    actual_run = subprocess.run
+    actual_popen = subprocess.Popen
     observed: dict[str, object] = {}
 
-    def recording_run(command, **kwargs):
+    class RecordingProcess:
+        def __init__(self, process: subprocess.Popen[str]) -> None:
+            self._process = process
+
+        @property
+        def pid(self) -> int:
+            return self._process.pid
+
+        @property
+        def returncode(self) -> int | None:
+            return self._process.returncode
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            observed.setdefault("communicate_timeouts", []).append(timeout)
+            return self._process.communicate(timeout=timeout)
+
+    def recording_popen(command, **kwargs):
         observed["command"] = command
         observed.update(kwargs)
-        return actual_run(command, **kwargs)
+        observed["cwd_mode"] = stat.S_IMODE(Path(kwargs["cwd"]).stat().st_mode)
+        return RecordingProcess(actual_popen(command, **kwargs))
 
-    monkeypatch.setattr("jobsearch_skill.cv.subprocess.run", recording_run)
+    monkeypatch.setattr("jobsearch_skill.cv_build.subprocess.Popen", recording_popen)
 
     service.build(run.run_id)
 
@@ -137,10 +280,92 @@ def test_build_uses_exact_safe_latexmk_invocation(build_setup, monkeypatch) -> N
         "-halt-on-error",
         prepared.tex.name,
     ]
-    assert observed["cwd"] == prepared.tex.parent
+    compiler_cwd = Path(observed["cwd"])
+    assert compiler_cwd != prepared.tex.parent
+    assert compiler_cwd.parent == prepared.root
+    assert compiler_cwd.name.startswith(".compiler-work-")
+    assert observed["cwd_mode"] == 0o700
+    assert not compiler_cwd.exists()
     assert observed["shell"] is False
-    assert observed["capture_output"] is True
-    assert observed["timeout"] == 120
+    assert observed["stdout"] is subprocess.PIPE
+    assert observed["stderr"] is subprocess.PIPE
+    assert observed["text"] is True
+    assert observed["start_new_session"] is True
+    assert observed["communicate_timeouts"] == [120.0]
+    environment = observed["env"]
+    assert environment["shell_escape"] == "0"
+    assert environment["openin_any"] == "p"
+    assert environment["openout_any"] == "p"
+    assert environment["HOME"].startswith(str(prepared.root))
+    assert environment["XDG_CONFIG_HOME"].startswith(str(prepared.root))
+    assert environment["LATEXMKRCSYS"].startswith(str(prepared.root))
+    assert environment["LATEXMKRC"].startswith(str(prepared.root))
+    assert "PRIVATE_AMBIENT_TOKEN" not in environment.values()
+
+
+@pytest.mark.parametrize("ambient_kind", ["home", "system"])
+def test_build_does_not_execute_ambient_latexmk_rc(
+    build_setup, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, ambient_kind: str
+) -> None:
+    service, _, run, _, _, _ = build_setup
+    sentinel = tmp_path / f"{ambient_kind}-rc-executed"
+    malicious_rc = tmp_path / f"{ambient_kind}.latexmkrc"
+    malicious_rc.write_text(f'system("touch {sentinel}");\n', encoding="utf-8")
+    if ambient_kind == "home":
+        ambient_home = tmp_path / "ambient-home"
+        ambient_home.mkdir()
+        (ambient_home / ".latexmkrc").write_bytes(malicious_rc.read_bytes())
+        monkeypatch.setenv("HOME", str(ambient_home))
+    else:
+        monkeypatch.setenv("LATEXMKRCSYS", str(malicious_rc))
+    monkeypatch.setenv("PRIVATE_AMBIENT_TOKEN", "PRIVATE_AMBIENT_TOKEN")
+
+    result = service.build(run.run_id)
+
+    assert result.verified is True
+    assert not sentinel.exists()
+
+
+def test_build_rejects_project_latexmk_rc_before_execution(build_setup, tmp_path: Path) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    sentinel = tmp_path / "project-rc-executed"
+    (prepared.source_dir / ".latexmkrc").write_text(
+        f'system("touch {sentinel}");\n', encoding="utf-8"
+    )
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_prepared_tampered"
+    assert not sentinel.exists()
+
+
+def test_real_build_invokes_no_ghostscript_or_network_helpers(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    actual_run = service._run_compiler
+    observed_database = ""
+
+    def recording_run(command, *, cwd, env):
+        nonlocal observed_database
+        result = actual_run(command, cwd=cwd, env=env)
+        database = Path(cwd) / Path(command[-1]).with_suffix(".fdb_latexmk")
+        observed_database = database.read_text(encoding="utf-8", errors="replace")
+        return result
+
+    monkeypatch.setattr(service, "_run_compiler", recording_run)
+
+    service.build(run.run_id)
+
+    database = observed_database.casefold()
+    assert "ghostscript" not in database
+    assert "ps2pdf" not in database
+    assert "curl " not in database
+    assert not prepared.tex.with_suffix(".log").exists()
+    assert not prepared.tex.with_suffix(".fls").exists()
+    assert not prepared.tex.with_suffix(".fdb_latexmk").exists()
+    assert not prepared.tex.with_suffix(".aux").exists()
 
 
 @pytest.mark.parametrize("failure", ["missing", "nonzero", "timeout"])
@@ -149,50 +374,230 @@ def test_build_tool_failures_preserve_private_redacted_log(
 ) -> None:
     service, _, run, _, _, _ = build_setup
     private_path = str(service.home)
-    canary = f"Avery Example avery@example.invalid {private_path}"
+    stdout_canary = f"RAW_STDOUT_TOKEN_91 Avery Example {private_path}"
+    stderr_canary = "RAW_STDERR_TOKEN_73 avery@example.invalid PRIVATE_VALUE_FRAGMENT"
 
     def failed_run(command, **kwargs):
         if failure == "missing":
-            raise FileNotFoundError(canary)
+            raise FileNotFoundError(stdout_canary)
+        sidecar = Path(kwargs["cwd"]) / "compiler-private.log"
+        sidecar.write_text(stderr_canary, encoding="utf-8")
         if failure == "timeout":
             partial = Path(kwargs["cwd"]) / "partial.aux"
-            partial.write_text(canary, encoding="utf-8")
+            partial.write_text(stdout_canary, encoding="utf-8")
             partial.chmod(0o644)
-            raise subprocess.TimeoutExpired(command, 120, output=canary, stderr=canary)
-        return subprocess.CompletedProcess(command, 2, stdout=canary, stderr=canary)
+            raise subprocess.TimeoutExpired(
+                command, 120, output=stdout_canary, stderr=stderr_canary
+            )
+        return subprocess.CompletedProcess(
+            command, 2, stdout=stdout_canary, stderr=stderr_canary
+        )
 
-    monkeypatch.setattr("jobsearch_skill.cv.subprocess.run", failed_run)
+    monkeypatch.setattr(service, "_run_compiler", failed_run)
 
     with pytest.raises(CVBuildError) as caught:
         service.build(run.run_id)
 
     error = caught.value
     assert error.log_path is not None and error.log_path.exists()
-    log = error.log_path.read_text(encoding="utf-8")
+    log_text = error.log_path.read_text(encoding="utf-8")
+    log = json.loads(log_text)
     assert stat.S_IMODE(error.log_path.stat().st_mode) == 0o600
-    assert "Avery Example" not in log
-    assert "avery@example.invalid" not in log
-    assert private_path not in log
+    assert set(log) == {
+        "output_present",
+        "page_count",
+        "reason_code",
+        "return_code",
+        "schema_version",
+        "stage",
+        "stderr_present",
+        "stdout_present",
+        "timed_out",
+    }
+    assert log["schema_version"] == 1
+    assert log["reason_code"] == {
+        "missing": "cv_build_tool_missing",
+        "nonzero": "cv_build_failed",
+        "timeout": "cv_build_timeout",
+    }[failure]
+    assert log["stage"] == "compiler"
+    assert log["return_code"] == (2 if failure == "nonzero" else -1)
+    assert log["timed_out"] is (failure == "timeout")
+    assert log["stdout_present"] is (failure in {"nonzero", "timeout"})
+    assert log["stderr_present"] is (failure in {"nonzero", "timeout"})
+    assert log["output_present"] is False
+    assert log["page_count"] == 0
+    for fragment in (
+        "RAW_STDOUT_TOKEN_91",
+        "RAW_STDERR_TOKEN_73",
+        "PRIVATE_VALUE_FRAGMENT",
+        "Avery",
+        "example.invalid",
+        "PRIVATE_BUILD_HOME_CANARY",
+        private_path,
+    ):
+        assert fragment not in log_text
     assert "fallback" not in error.decision
     assert private_path not in str(error)
-    if failure == "timeout":
-        partial = next(error.log_path.parent.rglob("partial.aux"))
-        assert stat.S_IMODE(partial.stat().st_mode) == 0o600
+    assert not (error.log_path.parent / "source" / "compiler-private.log").exists()
+    assert not (error.log_path.parent / "source" / "partial.aux").exists()
+
+
+def test_build_timeout_kills_compiler_process_group_before_cleanup(
+    build_setup, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    assert prepared.pdf is not None
+    declared_pdf_hash = hashlib.sha256(prepared.pdf.read_bytes()).hexdigest()
+    sentinel = tmp_path / "late-child-write"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    latexmk = bin_dir / "latexmk"
+    latexmk.write_text(
+        "#!/bin/sh\n"
+        "(\n"
+        "  trap '' TERM\n"
+        "  /bin/sleep 0.4\n"
+        f"  : > {shlex.quote(str(sentinel))}\n"
+        ") &\n"
+        "/bin/sleep 10\n",
+        encoding="utf-8",
+    )
+    latexmk.chmod(0o700)
+    monkeypatch.setattr(
+        "jobsearch_skill.cv_build.isolated_latex_environment",
+        lambda root: {"PATH": str(bin_dir)},
+    )
+    monkeypatch.setattr("jobsearch_skill.cv_build._BUILD_TIMEOUT_SECONDS", 0.15)
+    monkeypatch.setattr("jobsearch_skill.cv_build._TERMINATE_GRACE_SECONDS", 0.1)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_build_timeout"
+    time.sleep(0.5)
+    assert not sentinel.exists()
+    assert hashlib.sha256(prepared.pdf.read_bytes()).hexdigest() == declared_pdf_hash
+    assert sorted(path.name for path in prepared.source_dir.iterdir()) == [
+        "resume.pdf",
+        "resume.tex",
+    ]
+    assert not (prepared.root / "output").exists()
+
+
+def test_verified_rebuild_revalidates_prepared_source_bytes(build_setup) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    service.build(run.run_id)
+    assert prepared.tex is not None
+    prepared.tex.write_bytes(prepared.tex.read_bytes() + b"\n% tampered")
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_prepared_tampered"
+
+
+def test_verified_rebuild_rejects_changed_output_pdf(build_setup) -> None:
+    service, _, run, _, _, _ = build_setup
+    result = service.build(run.run_id)
+    result.pdf.write_bytes(result.pdf.read_bytes() + b"\nchanged verified artifact")
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_pdf_verification"
+
+
+@pytest.mark.parametrize("document_kind", ["facts", "evidence"])
+def test_build_revalidates_evidence_text_and_fact_anchors(
+    build_setup, monkeypatch: pytest.MonkeyPatch, document_kind: str
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    source_hash = str(prepared.manifest["source_hash"])
+    if document_kind == "facts":
+        path = service.facts_path(run.run_id, source_hash)
+        document = service.store.read_json(path, "cv-facts.v1")
+        document["projects"][0]["evidence_anchor"] = "FABRICATED_EVIDENCE_ANCHOR"
+        service.store.write_json(path, document, "cv-facts.v1")
+    else:
+        path = service.run_store.runs_dir / run.run_id / f"cv-evidence-{source_hash}.json"
+        document = service.store.read_json(path, "cv-evidence.v1")
+        document["sources"][0]["text"] = "FABRICATED_EVIDENCE_TEXT"
+        service.store.write_json(path, document, "cv-evidence.v1")
+
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("compiler must not run for unbound evidence")
+
+    monkeypatch.setattr(service, "_run_compiler", unexpected_run)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code in {"cv_evidence_mismatch", "cv_facts_mismatch"}
 
 
 def test_build_rejects_manifest_tex_escape_before_subprocess(build_setup, monkeypatch) -> None:
     service, _, run, prepared, _, _ = build_setup
     manifest = dict(prepared.manifest)
     manifest["expected_tex"] = "../manifest.yaml"
-    service._atomic_manifest(prepared.manifest_path, manifest)
+    prepared.manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+    )
+    prepared.manifest_path.chmod(0o600)
 
     def unexpected_run(*args, **kwargs):
         raise AssertionError("subprocess must not run")
 
-    monkeypatch.setattr("jobsearch_skill.cv.subprocess.run", unexpected_run)
+    monkeypatch.setattr(service, "_run_compiler", unexpected_run)
 
     with pytest.raises(CVBuildError):
         service.build(run.run_id)
+
+
+def test_build_rejects_manifest_omitting_declared_pdf(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    manifest = dict(prepared.manifest)
+    manifest["expected_pdf"] = None
+    prepared.manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+    )
+    prepared.manifest_path.chmod(0o600)
+
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("subprocess must not run for an incomplete manifest")
+
+    monkeypatch.setattr(service, "_run_compiler", unexpected_run)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_prepare_conflict"
+
+
+@pytest.mark.parametrize("field", ["run_id", "cv_name", "source_hash", "source_hashes"])
+def test_build_rebinds_facts_to_manifest_and_run(build_setup, monkeypatch, field: str) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    source_hash = prepared.manifest["source_hash"]
+    path = service.facts_path(run.run_id, source_hash)
+    facts = service.store.read_json(path, "cv-facts.v1")
+    if field == "source_hashes":
+        facts[field] = [{"source_ref": "resume.tex", "sha256": "f" * 64}]
+    elif field == "source_hash":
+        facts[field] = "f" * 64
+    else:
+        facts[field] = "run_transplanted" if field == "run_id" else "Transplanted CV"
+    service.store.write_json(path, facts, "cv-facts.v1")
+
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("compiler must not run for transplanted facts")
+
+    monkeypatch.setattr(service, "_run_compiler", unexpected_run)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+    assert caught.value.reason_code == "cv_facts_mismatch"
 
 
 @pytest.mark.parametrize("output_kind", ["malformed", "zero", "encrypted", "no_text", "symlink"])
@@ -202,7 +607,7 @@ def test_build_rejects_unverifiable_pdf_with_safe_log(
     service, _, run, prepared, _, _ = build_setup
 
     def fake_run(command, **kwargs):
-        output = prepared.tex.with_suffix(".pdf")
+        output = Path(kwargs["cwd"]) / Path(command[-1]).with_suffix(".pdf")
         if output_kind == "malformed":
             output.write_bytes(b"not a pdf")
         elif output_kind == "zero":
@@ -220,7 +625,7 @@ def test_build_rejects_unverifiable_pdf_with_safe_log(
                 writer.write(stream)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("jobsearch_skill.cv.subprocess.run", fake_run)
+    monkeypatch.setattr(service, "_run_compiler", fake_run)
 
     with pytest.raises(CVBuildError) as caught:
         service.build(run.run_id)
@@ -346,7 +751,10 @@ def test_cli_build_error_does_not_expose_log_path_or_compiler_values(
     def failed_run(command, **kwargs):
         return subprocess.CompletedProcess(command, 2, stdout=canary, stderr=canary)
 
-    monkeypatch.setattr("jobsearch_skill.cv.subprocess.run", failed_run)
+    monkeypatch.setattr(
+        "jobsearch_skill.cv_build.CVBuildMixin._run_compiler",
+        staticmethod(failed_run),
+    )
 
     assert main(["--home", str(service.home), "cv", "build", "--run-id", run.run_id]) == 5
     captured = capsys.readouterr()

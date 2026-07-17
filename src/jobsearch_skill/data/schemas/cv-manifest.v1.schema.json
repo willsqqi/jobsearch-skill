@@ -2,20 +2,30 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/jobsearch-skill/schemas/cv-manifest.v1.schema.json",
   "title": "Prepared and built CV manifest v1",
+  "$defs": {
+    "safe_ref": {"type": "string", "pattern": "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$"}
+  },
   "type": "object",
   "properties": {
     "schema_version": {"const": 1},
-    "run_id": {"type": "string"},
-    "source_cv_name": {"type": "string"},
-    "source_root": {"type": "string"},
+    "run_id": {"type": "string", "minLength": 1},
+    "source_cv_name": {"type": "string", "minLength": 1},
     "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "source_hashes": {"type": "object", "patternProperties": {"^.+$": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "additionalProperties": false},
+    "source_hashes": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/safe_ref"},
+      "patternProperties": {
+        "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
     "job_fingerprint": {"type": "string"},
-    "copied_files": {"type": "array", "items": {"type": "string"}, "minItems": 1, "uniqueItems": true},
-    "expected_tex": {"type": ["string", "null"]},
-    "expected_pdf": {"type": ["string", "null"]},
+    "copied_files": {"type": "array", "items": {"$ref": "#/$defs/safe_ref"}, "minItems": 1, "uniqueItems": true},
+    "expected_tex": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]},
+    "expected_pdf": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]},
     "status": {"enum": ["prepared", "built", "verified", "failed"]},
-    "output_pdf": {"type": ["string", "null"]},
+    "output_pdf": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]},
     "verification": {
       "type": ["object", "null"],
       "properties": {
@@ -23,7 +33,7 @@
         "page_count": {"type": "integer", "minimum": 0},
         "identity_present": {"type": "boolean"},
         "pdf_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
-        "log_ref": {"type": ["string", "null"]}
+        "log_ref": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]}
       },
       "required": ["verified", "page_count", "identity_present", "pdf_sha256", "log_ref"],
       "additionalProperties": false
@@ -31,6 +41,6 @@
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"}
   },
-  "required": ["schema_version", "run_id", "source_cv_name", "source_root", "source_hash", "source_hashes", "job_fingerprint", "copied_files", "expected_tex", "expected_pdf", "status", "output_pdf", "verification", "created_at", "updated_at"],
+  "required": ["schema_version", "run_id", "source_cv_name", "source_hash", "source_hashes", "job_fingerprint", "copied_files", "expected_tex", "expected_pdf", "status", "output_pdf", "verification", "created_at", "updated_at"],
   "additionalProperties": false
 }

@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import base64
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 
 from jobsearch_skill.cv import CVRegistry, CVSelection, CVService
 from jobsearch_skill.errors import CVBuildError
@@ -14,6 +16,11 @@ from jobsearch_skill.jobs import make_job_context
 from jobsearch_skill.runs import RunStore
 from jobsearch_skill.schema import SchemaRegistry
 from jobsearch_skill.storage import SafeStore
+
+
+_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _analysis(run_id: str, fingerprint: str) -> dict[str, object]:
@@ -50,7 +57,7 @@ def cv_setup(tmp_path: Path):
     root.mkdir(parents=True)
     fixture = Path(__file__).parents[1] / "fixtures" / "latex-cv" / "resume.tex"
     (root / "resume.tex").write_bytes(fixture.read_bytes())
-    (root / "declared.txt").write_text("declared public asset\n", encoding="utf-8")
+    (root / "declared.png").write_bytes(_PNG)
     (root / "undeclared.txt").write_text("must not be copied\n", encoding="utf-8")
     preferences = {
         "default_cv": "Avery Example CV",
@@ -59,7 +66,7 @@ def cv_setup(tmp_path: Path):
                 "name": "Avery Example CV",
                 "root": "cvs/avery",
                 "tex": "resume.tex",
-                "assets": ["declared.txt"],
+                "assets": ["declared.png"],
             }
         ],
     }
@@ -95,7 +102,7 @@ def test_prepare_copies_only_declared_inputs_and_preserves_source_hashes(cv_setu
     assert _hashes(selection) == before
     assert prepared.manifest["source_hashes"] == before
     assert sorted(path.relative_to(prepared.source_dir).as_posix() for path in prepared.source_dir.rglob("*") if path.is_file()) == [
-        "declared.txt",
+        "declared.png",
         "resume.tex",
     ]
     assert not (prepared.source_dir / root.joinpath("undeclared.txt").name).exists()
@@ -177,13 +184,13 @@ def test_prepare_rejects_symlink_special_and_duplicate_sources(cv_setup, tmp_pat
 
 def test_prepare_preserves_nested_relative_asset_paths(cv_setup) -> None:
     service, selection, run, root = cv_setup
-    nested = root / "figures" / "diagram.txt"
+    nested = root / "figures" / "diagram.png"
     nested.parent.mkdir()
-    nested.write_text("public diagram", encoding="utf-8")
+    nested.write_bytes(_PNG)
 
     prepared = service.prepare(run.run_id, replace(selection, assets=(nested,)))
 
-    assert (prepared.source_dir / "figures" / "diagram.txt").read_bytes() == nested.read_bytes()
+    assert (prepared.source_dir / "figures" / "diagram.png").read_bytes() == nested.read_bytes()
 
 
 def test_prepare_copy_failure_leaves_no_partial_manifest(
@@ -191,16 +198,16 @@ def test_prepare_copy_failure_leaves_no_partial_manifest(
 ) -> None:
     service, selection, run, _ = cv_setup
     calls = 0
-    original = service._copy_atomic
+    original = service._copy_bytes_atomic
 
-    def fail_second(source: Path, target: Path) -> None:
+    def fail_second(data: bytes, target: Path) -> None:
         nonlocal calls
         calls += 1
         if calls == 2:
             raise CVBuildError("copy failed", reason_code="cv_source_invalid")
-        original(source, target)
+        original(data, target)
 
-    monkeypatch.setattr(service, "_copy_atomic", fail_second)
+    monkeypatch.setattr(service, "_copy_bytes_atomic", fail_second)
 
     with pytest.raises(CVBuildError):
         service.prepare(run.run_id, selection)
@@ -215,3 +222,174 @@ def test_slug_rejects_dot_components(cv_setup, value: str) -> None:
 
     with pytest.raises(CVBuildError):
         service._slug(value)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        r"\documentclass{article}\immediate\write18{curl https://example.invalid}",
+        r"\documentclass{article}\input{|gs --version}",
+        r"\documentclass{article}\csname input\endcsname{/etc/passwd}",
+        r"\documentclass{article}\catcode`\@=0",
+        r"\documentclass{article}\usepackage{shellesc}",
+        r"\documentclass{standalone}\begin{document}Avery Example\end{document}",
+        r"\documentclass{article}\special{ps: plotfile secret}",
+        (
+            r"\documentclass{article}\usepackage{graphicx}\begin{document}"
+            r"\includegraphics*{/etc/passwd}\end{document}"
+        ),
+    ],
+)
+def test_prepare_rejects_active_tex_surfaces_before_copy(cv_setup, source: str) -> None:
+    service, selection, run, _ = cv_setup
+    assert selection.tex is not None
+    selection.tex.write_text(source, encoding="utf-8")
+
+    with pytest.raises(CVBuildError, match="unsafe"):
+        service.prepare(run.run_id, selection)
+
+    assert not list(service.generated_root.rglob("manifest.yaml"))
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        (".latexmkrc", b"system('false')"),
+        ("latexmkrc", b"system('false')"),
+        ("custom.sty", b"\\immediate\\write18{false}"),
+        ("custom.cls", b"active class"),
+        ("payload.tex", b"active input"),
+        ("payload.lua", b"os.execute('false')"),
+        ("payload.pl", b"system('false')"),
+        ("payload.sh", b"#!/bin/sh\nfalse"),
+        ("fake.png", b"not a png"),
+    ],
+)
+def test_prepare_rejects_executable_or_invalid_declared_assets(
+    cv_setup, name: str, content: bytes
+) -> None:
+    service, selection, run, root = cv_setup
+    asset = root / name
+    asset.write_bytes(content)
+
+    with pytest.raises(CVBuildError, match="unsafe"):
+        service.prepare(run.run_id, replace(selection, assets=(asset,)))
+
+
+def test_prepare_rejects_option_like_declared_reference(cv_setup) -> None:
+    service, selection, _, root = cv_setup
+    assert selection.tex is not None
+    option_like_tex = root / "-e.tex"
+    option_like_tex.write_bytes(selection.tex.read_bytes())
+
+    with pytest.raises(CVBuildError) as caught:
+        service._declared_inputs(replace(selection, tex=option_like_tex))
+
+    assert caught.value.reason_code == "cv_source_invalid"
+
+
+def test_prepare_hashes_and_copies_the_same_opened_bytes(
+    cv_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, selection, run, _ = cv_setup
+    assert selection.tex is not None
+    original = selection.tex.read_bytes()
+    from jobsearch_skill import cv_security
+
+    original_safe_read = cv_security.safe_read_relative
+    changed = False
+
+    def mutate_after_read(root: Path, relative: Path) -> bytes:
+        nonlocal changed
+        value = original_safe_read(root, relative)
+        if root == selection.root and relative == selection.tex.relative_to(root) and not changed:
+            changed = True
+            selection.tex.write_bytes(value + b"\n% changed after descriptor read")
+        return value
+
+    monkeypatch.setattr(cv_security, "safe_read_relative", mutate_after_read)
+
+    prepared = service.prepare(run.run_id, selection)
+
+    assert changed is True
+    assert prepared.tex is not None
+    assert prepared.tex.read_bytes() == original
+    assert prepared.manifest["source_hashes"]["resume.tex"] == hashlib.sha256(original).hexdigest()
+
+
+def test_prepare_rejects_post_copy_digest_mismatch(
+    cv_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, selection, run, _ = cv_setup
+    original_copy = service._copy_bytes_atomic
+
+    def corrupt_copy(data: bytes, target: Path) -> None:
+        original_copy(data, target)
+        if target.name == "resume.tex":
+            target.write_bytes(target.read_bytes() + b"corrupt")
+
+    monkeypatch.setattr(service, "_copy_bytes_atomic", corrupt_copy)
+
+    with pytest.raises(CVBuildError, match="digest"):
+        service.prepare(run.run_id, selection)
+
+    assert not list(service.generated_root.rglob("manifest.yaml"))
+
+
+def test_prepare_normalizes_every_generated_directory_to_0700(cv_setup) -> None:
+    service, selection, run, _ = cv_setup
+
+    prepared = service.prepare(run.run_id, selection)
+
+    relative = prepared.root.relative_to(service.generated_root)
+    current = service.generated_root
+    for component in relative.parts:
+        current /= component
+        assert stat.S_IMODE(current.stat().st_mode) == 0o700
+
+
+def test_manifest_never_stores_the_original_absolute_cv_root(cv_setup) -> None:
+    service, selection, run, _ = cv_setup
+
+    prepared = service.prepare(run.run_id, selection)
+
+    assert "source_root" not in prepared.manifest
+    assert str(selection.root) not in prepared.manifest_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("mutation", ["delete", "change"])
+def test_repeat_prepare_revalidates_every_copied_source(cv_setup, mutation: str) -> None:
+    service, selection, run, _ = cv_setup
+    prepared = service.prepare(run.run_id, selection)
+    assert prepared.tex is not None
+    if mutation == "delete":
+        prepared.tex.unlink()
+    else:
+        prepared.tex.write_bytes(prepared.tex.read_bytes() + b"changed")
+
+    with pytest.raises(CVBuildError, match="conflict"):
+        service.prepare(run.run_id, selection)
+
+
+@pytest.mark.parametrize(
+    "field", ["copied_files", "expected_tex", "source_hash", "source_hashes"]
+)
+def test_repeat_prepare_rejects_manifest_source_mapping_mismatch(cv_setup, field: str) -> None:
+    service, selection, run, _ = cv_setup
+    prepared = service.prepare(run.run_id, selection)
+    manifest = dict(prepared.manifest)
+    if field == "copied_files":
+        manifest[field] = ["declared.png", "resume.tex"]
+    elif field == "expected_tex":
+        manifest[field] = "declared.png"
+    elif field == "source_hash":
+        manifest[field] = "f" * 64
+    else:
+        manifest[field] = {"../resume.tex": "f" * 64}
+    prepared.manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+    )
+    prepared.manifest_path.chmod(0o600)
+
+    with pytest.raises(CVBuildError, match="conflict"):
+        service.prepare(run.run_id, selection)
