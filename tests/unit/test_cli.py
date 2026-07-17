@@ -106,6 +106,66 @@ def test_cli_usage_error_is_one_json_envelope(capsys) -> None:
     }
 
 
+def test_cli_cv_resolve_returns_only_requested_selection(tmp_path: Path, capsys) -> None:
+    home = tmp_path / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+    (home / "cvs" / "swe").mkdir(parents=True)
+    (home / "cvs" / "swe" / "resume.tex").write_text("\\documentclass{article}")
+    (home / "cvs" / "swe" / "resume.pdf").write_bytes(b"%PDF-1.4 synthetic")
+    (home / "preferences.yaml").write_text(
+        """schema_version: 1
+default_cv: SWE
+cvs:
+  - name: SWE
+    root: cvs/swe
+    tex: resume.tex
+    pdf: resume.pdf
+    assets: []
+  - name: DE
+    root: cvs/de
+    pdf: resume.pdf
+    assets: []
+browser: builtin
+platform_priority: [workday]
+submission_mode: manual
+generated_artifacts:
+  naming_template: "{company}-{role}-{run_id}"
+  retain_days: 30
+  retain_failed_builds: true
+  retain_build_logs: true
+""",
+        encoding="utf-8",
+    )
+
+    assert main(["--home", str(home), "cv", "resolve", "--cv", "swe", "--for-customization"]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert captured.err == ""
+    assert payload["schema_version"] == 1
+    assert payload["cv"]["name"] == "SWE"
+    assert payload["cv"]["tex"].endswith("cvs/swe/resume.tex")
+    assert "DE" not in captured.out
+
+
+def test_cli_cv_selection_error_is_a_safe_single_envelope(tmp_path: Path, capsys) -> None:
+    home = tmp_path / "PRIVATE_CV_HOME_CANARY" / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+
+    assert main(["--home", str(home), "cv", "resolve", "--cv", "missing.pdf"]) == 4
+    captured = capsys.readouterr()
+
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "reason_code": "cv_path_unavailable",
+        "status": "error",
+    }
+    assert "PRIVATE_CV_HOME_CANARY" not in captured.out
+    assert "missing.pdf" not in captured.out
+
+
 def test_cli_csv_open_failure_is_safe_storage_error(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:

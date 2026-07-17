@@ -37,3 +37,21 @@ class StorageValidationError(SchemaValidationError):
     """A storage write failed validation and is safe to catch as schema failure."""
 
     exit_code = 6
+
+
+class JobContextError(JobsearchError):
+    """A supplied job context cannot be normalized safely."""
+
+    exit_code = 3
+
+
+class ProfileLookupError(JobsearchError):
+    """A profile semantic key is unapproved or unavailable."""
+
+    exit_code = 3
+
+
+class CVSelectionError(JobsearchError):
+    """A requested CV cannot be selected without exposing private details."""
+
+    exit_code = 4

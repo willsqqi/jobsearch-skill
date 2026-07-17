@@ -1,0 +1,10 @@
+{
+  "job_url": "https://careers.example.invalid/jobs/backend-engineer?source=board&job_id=7",
+  "company": "Example Engineering",
+  "role": "Backend Engineer",
+  "location": "Example City",
+  "description": "Build reliable APIs and distributed services.",
+  "required": ["Python", "SQL"],
+  "preferred": ["Kubernetes"],
+  "technologies": ["Python", "PostgreSQL"]
+}
