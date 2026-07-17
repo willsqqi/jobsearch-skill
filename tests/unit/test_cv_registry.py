@@ -62,6 +62,22 @@ def test_explicit_tex_path_can_be_customized(registry: CVRegistry, tmp_path: Pat
     assert selection.pdf is None
 
 
+@pytest.mark.parametrize("parent_name", ["folder with space", "résumé-parent", ".hidden"])
+def test_explicit_path_allows_nonportable_parent_components(
+    registry: CVRegistry, tmp_path: Path, parent_name: str
+) -> None:
+    parent = tmp_path / parent_name
+    parent.mkdir()
+    tex = parent / "candidate.tex"
+    tex.write_text(
+        "\\documentclass{article}\\begin{document}Synthetic\\end{document}"
+    )
+
+    selection = registry.resolve(str(tex), for_customization=True)
+
+    assert selection.tex == tex.absolute()
+
+
 def test_unregistered_tex_with_external_assets_cannot_be_customized(
     registry: CVRegistry, tmp_path: Path
 ) -> None:
@@ -134,6 +150,196 @@ def test_registered_files_always_resolve_relative_to_declared_root(tmp_path: Pat
     assert selection.pdf == (root / "resume.pdf").resolve()
     assert selection.pdf.read_bytes() == b"root PDF"
     assert selection.assets == ((root / "asset.png").resolve(),)
+
+
+def test_registered_absolute_root_allows_nonportable_parent_components(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "CV Library" / "résumé" / ".current"
+    root.mkdir(parents=True)
+    pdf = root / "resume.pdf"
+    pdf.write_bytes(b"%PDF-1.4 synthetic")
+    registry = CVRegistry(
+        {
+            "default_cv": "SWE",
+            "cvs": [
+                {
+                    "name": "SWE",
+                    "root": str(root),
+                    "pdf": "resume.pdf",
+                    "assets": [],
+                }
+            ],
+        },
+        tmp_path,
+    )
+
+    assert registry.resolve("SWE").pdf == pdf.absolute()
+
+
+def test_registered_file_symlink_is_rejected_without_resolving_target(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cvs" / "swe"
+    root.mkdir(parents=True)
+    target = root / "target.pdf"
+    target.write_bytes(b"%PDF-1.4 synthetic")
+    (root / "resume.pdf").symlink_to(target)
+    registry = CVRegistry(
+        {
+            "default_cv": "SWE",
+            "cvs": [
+                {
+                    "name": "SWE",
+                    "root": "cvs/swe",
+                    "pdf": "resume.pdf",
+                    "assets": [],
+                }
+            ],
+        },
+        tmp_path,
+    )
+
+    with pytest.raises(CVSelectionError) as caught:
+        registry.resolve("SWE")
+
+    assert caught.value.reason_code == "cv_registry_invalid"
+
+
+def test_registered_nested_directory_symlink_is_rejected_without_traversal(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "cvs" / "swe"
+    root.mkdir(parents=True)
+    (root / "resume.pdf").write_bytes(b"%PDF-1.4 synthetic")
+    outside = tmp_path / "outside-assets"
+    outside.mkdir()
+    (outside / "asset.png").write_bytes(b"synthetic")
+    (root / "figures").symlink_to(outside, target_is_directory=True)
+    registry = CVRegistry(
+        {
+            "default_cv": "SWE",
+            "cvs": [
+                {
+                    "name": "SWE",
+                    "root": "cvs/swe",
+                    "pdf": "resume.pdf",
+                    "assets": ["figures/asset.png"],
+                }
+            ],
+        },
+        tmp_path,
+    )
+
+    with pytest.raises(CVSelectionError) as caught:
+        registry.resolve("SWE")
+
+    assert caught.value.reason_code == "cv_registry_invalid"
+
+
+def test_registered_root_ancestor_symlink_is_rejected_without_traversal(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    root = outside / "swe"
+    root.mkdir(parents=True)
+    (root / "resume.pdf").write_bytes(b"%PDF-1.4 synthetic")
+    (tmp_path / "cvs").symlink_to(outside, target_is_directory=True)
+    registry = CVRegistry(
+        {
+            "default_cv": "SWE",
+            "cvs": [
+                {
+                    "name": "SWE",
+                    "root": "cvs/swe",
+                    "pdf": "resume.pdf",
+                    "assets": [],
+                }
+            ],
+        },
+        tmp_path,
+    )
+
+    with pytest.raises(CVSelectionError) as caught:
+        registry.resolve("SWE")
+
+    assert caught.value.reason_code == "cv_registry_invalid"
+
+
+def test_explicit_file_symlink_is_rejected_without_resolving_target(
+    registry: CVRegistry, tmp_path: Path
+) -> None:
+    target = tmp_path / "target.tex"
+    target.write_text(
+        "\\documentclass{article}\\begin{document}Synthetic\\end{document}"
+    )
+    declared = tmp_path / "declared.tex"
+    declared.symlink_to(target)
+
+    with pytest.raises(CVSelectionError) as caught:
+        registry.resolve(str(declared), for_customization=True)
+
+    assert caught.value.reason_code == "cv_path_unavailable"
+
+
+@pytest.mark.parametrize("filename", ["candidate.TEX", "candidate.PDF"])
+def test_explicit_reference_requires_an_exact_supported_extension(
+    registry: CVRegistry, tmp_path: Path, filename: str
+) -> None:
+    candidate = tmp_path / filename
+    candidate.write_bytes(
+        b"%PDF-1.4 synthetic"
+        if candidate.suffix == ".PDF"
+        else b"\\documentclass{article}\\begin{document}Synthetic\\end{document}"
+    )
+
+    with pytest.raises(CVSelectionError) as caught:
+        registry.resolve(str(candidate))
+
+    assert caught.value.reason_code == "cv_type_invalid"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "resume name.tex",
+        "resume`curl`.tex",
+        "resume$(curl).tex",
+        "resume;curl.tex",
+        "resume'quote.tex",
+        'resume"quote.tex',
+        "resume*.tex",
+        ".resume.tex",
+        "résumé.tex",
+    ],
+)
+def test_registered_reference_requires_portable_components(
+    tmp_path: Path, filename: str
+) -> None:
+    root = tmp_path / "cvs" / "swe"
+    root.mkdir(parents=True)
+    (root / filename).write_text(
+        "\\documentclass{article}\\begin{document}Synthetic\\end{document}"
+    )
+    registry = CVRegistry(
+        {
+            "default_cv": "SWE",
+            "cvs": [
+                {
+                    "name": "SWE",
+                    "root": "cvs/swe",
+                    "tex": filename,
+                    "assets": [],
+                }
+            ],
+        },
+        tmp_path,
+    )
+
+    with pytest.raises(CVSelectionError) as caught:
+        registry.resolve("SWE", for_customization=True)
+
+    assert caught.value.reason_code == "cv_registry_invalid"
 
 
 def test_registered_dotted_name_resolves_before_explicit_path_interpretation(tmp_path: Path) -> None:

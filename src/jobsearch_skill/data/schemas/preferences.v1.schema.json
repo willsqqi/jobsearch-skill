@@ -2,6 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/jobsearch-skill/schemas/preferences.v1.schema.json",
   "title": "Workflow preferences v1",
+  "$defs": {
+    "portable_ref": {"type": "string", "pattern": "^[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?(?:/[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?)*$"},
+    "absolute_root": {"type": "string", "pattern": "^/[^\\u0000-\\u001F\\u007F]+$"},
+    "root_ref": {"anyOf": [{"$ref": "#/$defs/portable_ref"}, {"$ref": "#/$defs/absolute_root"}]},
+    "tex_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.tex$"},
+    "pdf_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.pdf$"},
+    "png_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.png$"}
+  },
   "type": "object",
   "properties": {
     "schema_version": {"const": 1},
@@ -13,10 +21,10 @@
         "type": "object",
         "properties": {
           "name": {"type": "string", "minLength": 1},
-          "root": {"type": "string", "minLength": 1},
-          "tex": {"type": "string", "minLength": 1},
-          "pdf": {"type": "string", "minLength": 1},
-          "assets": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+          "root": {"$ref": "#/$defs/root_ref"},
+          "tex": {"$ref": "#/$defs/tex_ref"},
+          "pdf": {"$ref": "#/$defs/pdf_ref"},
+          "assets": {"type": "array", "items": {"$ref": "#/$defs/png_ref"}, "uniqueItems": true}
         },
         "required": ["name", "root", "assets"],
         "anyOf": [{"required": ["tex"]}, {"required": ["pdf"]}],

@@ -70,6 +70,17 @@ def test_every_declared_object_shape_is_closed() -> None:
         {"nested/": "0" * 64},
         {"-e.tex": "0" * 64},
         {"nested/-e.tex": "0" * 64},
+        {".resume.tex": "0" * 64},
+        {"resume name.tex": "0" * 64},
+        {"resume`curl`.tex": "0" * 64},
+        {"resume$(curl).tex": "0" * 64},
+        {"resume;curl.tex": "0" * 64},
+        {"resume'quote.tex": "0" * 64},
+        {'resume"quote.tex': "0" * 64},
+        {"resume*.tex": "0" * 64},
+        {"resume\n.tex": "0" * 64},
+        {"résumé.tex": "0" * 64},
+        {"asset.txt": "0" * 64},
         {"resume.tex": "not-a-digest"},
     ],
 )
@@ -98,9 +109,120 @@ def test_cv_manifest_rejects_empty_or_unsafe_source_hashes(
         schema_registry.validate("cv-manifest.v1", document)
 
 
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "resume name.tex",
+        "resume`curl`.tex",
+        "resume$(curl).tex",
+        "resume;curl.tex",
+        "resume'quote.tex",
+        'resume"quote.tex',
+        "resume*.tex",
+        ".resume.tex",
+        "résumé.tex",
+        "resume.txt",
+    ],
+)
+def test_preferences_reject_nonportable_cv_source_references(
+    schema_registry: SchemaRegistry, reference: str
+) -> None:
+    document = {
+        "schema_version": 1,
+        "default_cv": "Synthetic CV",
+        "cvs": [
+            {
+                "name": "Synthetic CV",
+                "root": "cvs/synthetic",
+                "tex": reference,
+                "assets": [],
+            }
+        ],
+        "browser": "builtin",
+        "platform_priority": ["workday"],
+        "submission_mode": "manual",
+        "generated_artifacts": {
+            "naming_template": "{company}-{role}-{run_id}",
+            "retain_days": 30,
+            "retain_failed_builds": True,
+            "retain_build_logs": True,
+        },
+    }
+
+    with pytest.raises(SchemaValidationError):
+        schema_registry.validate("preferences.v1", document)
+
+
+def test_preferences_allow_an_absolute_cv_root_with_nonportable_parent_names(
+    schema_registry: SchemaRegistry,
+) -> None:
+    document = {
+        "schema_version": 1,
+        "default_cv": "Synthetic CV",
+        "cvs": [
+            {
+                "name": "Synthetic CV",
+                "root": "/Users/Synthetic User/résumé/.current",
+                "tex": "resume.tex",
+                "assets": [],
+            }
+        ],
+        "browser": "builtin",
+        "platform_priority": ["workday"],
+        "submission_mode": "manual",
+        "generated_artifacts": {
+            "naming_template": "{company}-{role}-{run_id}",
+            "retain_days": 30,
+            "retain_failed_builds": True,
+            "retain_build_logs": True,
+        },
+    }
+
+    schema_registry.validate("preferences.v1", document)
+
+
+def test_preferences_still_reject_a_nonportable_relative_cv_root(
+    schema_registry: SchemaRegistry,
+) -> None:
+    document = {
+        "schema_version": 1,
+        "default_cv": "Synthetic CV",
+        "cvs": [
+            {
+                "name": "Synthetic CV",
+                "root": "CV Library/synthetic",
+                "tex": "resume.tex",
+                "assets": [],
+            }
+        ],
+        "browser": "builtin",
+        "platform_priority": ["workday"],
+        "submission_mode": "manual",
+        "generated_artifacts": {
+            "naming_template": "{company}-{role}-{run_id}",
+            "retain_days": 30,
+            "retain_failed_builds": True,
+            "retain_build_logs": True,
+        },
+    }
+
+    with pytest.raises(SchemaValidationError):
+        schema_registry.validate("preferences.v1", document)
+
+
 @pytest.mark.parametrize("contract", ["cv-evidence.v1", "cv-facts.v1"])
-def test_cv_source_contracts_reject_option_like_references(
-    schema_registry: SchemaRegistry, contract: str
+@pytest.mark.parametrize(
+    "source_ref",
+    [
+        "-e.tex",
+        ".resume.tex",
+        "resume`curl`.tex",
+        "resume name.tex",
+        "resume.txt",
+    ],
+)
+def test_cv_source_contracts_reject_nonportable_references(
+    schema_registry: SchemaRegistry, contract: str, source_ref: str
 ) -> None:
     digest = "0" * 64
     common = {
@@ -108,13 +230,17 @@ def test_cv_source_contracts_reject_option_like_references(
         "run_id": "run_synthetic",
         "cv_name": "Synthetic CV",
         "source_hash": digest,
-        "source_hashes": [{"source_ref": "-e.tex", "sha256": digest}],
+        "source_hashes": [{"source_ref": source_ref, "sha256": digest}],
     }
     if contract == "cv-evidence.v1":
         document = {
             **common,
             "sources": [
-                {"source_ref": "-e.tex", "kind": "tex", "text": "Avery Example"}
+                {
+                    "source_ref": source_ref,
+                    "kind": "tex",
+                    "text": "Avery Example",
+                }
             ],
             "created_at": "2026-07-17T00:00:00Z",
         }

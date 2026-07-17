@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shlex
+import os
+import signal
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -132,6 +134,94 @@ def build_setup(tmp_path: Path):
     return service, selection, run, prepared, tex, original_hash
 
 
+def _rewrite_prepared_tex_reference(service, run, prepared, reference: str) -> None:
+    manifest = dict(prepared.manifest)
+    original_reference = str(manifest["expected_tex"])
+    original_hash = str(manifest["source_hash"])
+    original_tex = prepared.source_dir / original_reference
+    rewritten_tex = prepared.source_dir / reference
+    original_tex.rename(rewritten_tex)
+    source_hashes = {
+        (reference if key == original_reference else str(key)): str(digest)
+        for key, digest in manifest["source_hashes"].items()
+    }
+    source_hash = service._aggregate_hash(source_hashes)
+    manifest.update(
+        {
+            "source_hash": source_hash,
+            "source_hashes": source_hashes,
+            "copied_files": [
+                reference if item == original_reference else item
+                for item in manifest["copied_files"]
+            ],
+            "expected_tex": reference,
+        }
+    )
+    prepared.manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+    )
+    prepared.manifest_path.chmod(0o600)
+
+    old_facts_path = service.facts_path(run.run_id, original_hash)
+    facts = service.store.read_json(old_facts_path, "cv-facts.v1")
+    facts["source_hash"] = source_hash
+    facts["source_hashes"] = service._hash_entries(source_hashes)
+    new_facts_path = service.facts_path(run.run_id, source_hash)
+    new_facts_path.write_text(json.dumps(facts), encoding="utf-8")
+    new_facts_path.chmod(0o600)
+
+    old_evidence_path = (
+        service.run_store.runs_dir
+        / run.run_id
+        / f"cv-evidence-{original_hash}.json"
+    )
+    evidence = service.store.read_json(old_evidence_path, "cv-evidence.v1")
+    evidence["source_hash"] = source_hash
+    evidence["source_hashes"] = service._hash_entries(source_hashes)
+    for source in evidence["sources"]:
+        if source["source_ref"] == original_reference:
+            source["source_ref"] = reference
+    new_evidence_path = (
+        service.run_store.runs_dir / run.run_id / f"cv-evidence-{source_hash}.json"
+    )
+    new_evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    new_evidence_path.chmod(0o600)
+
+
+@pytest.mark.parametrize("helper", ["curl", "gs"])
+def test_build_rejects_latexmk_shell_substitution_filename_before_execution(
+    build_setup, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, helper: str
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    reference = f"resume`{helper}`.tex"
+    _rewrite_prepared_tex_reference(service, run, prepared, reference)
+    sentinel = tmp_path / f"{helper}-helper-executed"
+    bin_dir = tmp_path / "adversarial-bin"
+    bin_dir.mkdir()
+    helper_path = bin_dir / helper
+    helper_path.write_text('#!/bin/sh\n: > "$PWN_TARGET"\n', encoding="utf-8")
+    helper_path.chmod(0o700)
+    from jobsearch_skill import cv_build
+
+    actual_environment = cv_build.isolated_latex_environment
+
+    def adversarial_environment(root: Path) -> dict[str, str]:
+        environment = actual_environment(root)
+        environment["PATH"] = f"{bin_dir}{os.pathsep}{environment['PATH']}"
+        environment["PWN_TARGET"] = str(sentinel)
+        return environment
+
+    monkeypatch.setattr(
+        "jobsearch_skill.cv_build.isolated_latex_environment",
+        adversarial_environment,
+    )
+
+    with pytest.raises(CVBuildError):
+        service.build(run.run_id)
+
+    assert not sentinel.exists()
+
+
 def test_build_creates_verified_pdf_without_mutating_original(build_setup) -> None:
     service, _, run, prepared, original, original_hash = build_setup
 
@@ -218,6 +308,85 @@ def test_build_removes_stale_compiler_workspace_before_running(
     assert not list(prepared.root.glob(".compiler-work-*"))
 
 
+def test_build_purges_stale_output_before_compiler_execution(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    stale_output = prepared.root / "output" / "resume.pdf"
+    stale_output.parent.mkdir(mode=0o700)
+    stale_output.write_bytes(b"stale private output")
+    stale_output.chmod(0o600)
+
+    def failed_run(command, **kwargs):
+        assert not stale_output.exists()
+        assert not stale_output.parent.exists()
+        return subprocess.CompletedProcess(command, 2, stdout="", stderr="")
+
+    monkeypatch.setattr(service, "_run_compiler", failed_run)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_build_failed"
+    assert not stale_output.parent.exists()
+
+
+def test_build_verifies_pdf_bytes_before_publishing_output(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+
+    def successful_run(command, **kwargs):
+        compiled = Path(kwargs["cwd"]) / Path(command[-1]).with_suffix(".pdf")
+        _write_text_pdf(compiled, "Avery Example verified in memory")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    from jobsearch_skill import cv_build
+
+    actual_reader = cv_build.PdfReader
+
+    def reader_before_publication(stream):
+        assert not (prepared.root / "output").exists()
+        return actual_reader(stream)
+
+    monkeypatch.setattr(service, "_run_compiler", successful_run)
+    monkeypatch.setattr(cv_build, "PdfReader", reader_before_publication)
+
+    result = service.build(run.run_id)
+
+    assert result.verified is True
+    assert result.pdf.exists()
+
+
+def test_build_normalizes_page_extraction_failure_without_publishing_output(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+
+    def successful_run(command, **kwargs):
+        compiled = Path(kwargs["cwd"]) / Path(command[-1]).with_suffix(".pdf")
+        _write_text_pdf(compiled, "Avery Example parser fixture")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    class BrokenPage:
+        def extract_text(self) -> str:
+            raise TypeError("synthetic parser failure")
+
+    class BrokenReader:
+        is_encrypted = False
+        pages = [BrokenPage()]
+
+    monkeypatch.setattr(service, "_run_compiler", successful_run)
+    monkeypatch.setattr("jobsearch_skill.cv_build.PdfReader", lambda stream: BrokenReader())
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_pdf_verification"
+    assert not (prepared.root / "output").exists()
+    assert caught.value.log_path is not None and caught.value.log_path.exists()
+
+
 def test_build_rejects_stale_compiler_workspace_symlink_without_following(
     build_setup, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -290,6 +459,8 @@ def test_build_uses_exact_safe_latexmk_invocation(build_setup, monkeypatch) -> N
     assert observed["stdout"] is subprocess.PIPE
     assert observed["stderr"] is subprocess.PIPE
     assert observed["text"] is True
+    assert observed["encoding"] == "utf-8"
+    assert observed["errors"] == "replace"
     assert observed["start_new_session"] is True
     assert observed["communicate_timeouts"] == [120.0]
     environment = observed["env"]
@@ -301,6 +472,37 @@ def test_build_uses_exact_safe_latexmk_invocation(build_setup, monkeypatch) -> N
     assert environment["LATEXMKRCSYS"].startswith(str(prepared.root))
     assert environment["LATEXMKRC"].startswith(str(prepared.root))
     assert "PRIVATE_AMBIENT_TOKEN" not in environment.values()
+
+
+def test_build_normalizes_invalid_compiler_utf8_to_value_free_diagnostics(
+    build_setup, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    bin_dir = tmp_path / "invalid-byte-bin"
+    bin_dir.mkdir()
+    latexmk = bin_dir / "latexmk"
+    latexmk.write_text(
+        "#!/bin/sh\n"
+        "printf '\\377'\n"
+        "printf '\\376' >&2\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    latexmk.chmod(0o700)
+    monkeypatch.setattr(
+        "jobsearch_skill.cv_build.isolated_latex_environment",
+        lambda root: {"PATH": str(bin_dir)},
+    )
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_build_failed"
+    assert caught.value.log_path is not None
+    log = json.loads(caught.value.log_path.read_text(encoding="utf-8"))
+    assert log["stdout_present"] is True
+    assert log["stderr_present"] is True
+    assert not (prepared.root / "output").exists()
 
 
 @pytest.mark.parametrize("ambient_kind", ["home", "system"])
@@ -449,32 +651,57 @@ def test_build_timeout_kills_compiler_process_group_before_cleanup(
     service, _, run, prepared, _, _ = build_setup
     assert prepared.pdf is not None
     declared_pdf_hash = hashlib.sha256(prepared.pdf.read_bytes()).hexdigest()
+    ready = tmp_path / "child-ready"
     sentinel = tmp_path / "late-child-write"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     latexmk = bin_dir / "latexmk"
     latexmk.write_text(
-        "#!/bin/sh\n"
-        "(\n"
-        "  trap '' TERM\n"
-        "  /bin/sleep 0.4\n"
-        f"  : > {shlex.quote(str(sentinel))}\n"
-        ") &\n"
-        "/bin/sleep 10\n",
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "import signal\n"
+        "import time\n"
+        "if os.fork() == 0:\n"
+        "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "    signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+        "    os.closerange(0, 256)\n"
+        f"    open({str(ready)!r}, 'w').write(str(os.getpid()))\n"
+        "    time.sleep(1.3)\n"
+        f"    open({str(sentinel)!r}, 'wb').close()\n"
+        "    time.sleep(10)\n"
+        "else:\n"
+        "    time.sleep(10)\n",
         encoding="utf-8",
     )
     latexmk.chmod(0o700)
+    run_compiler = service._run_compiler
+
+    def run_local_compiler(command, **kwargs):
+        return run_compiler([str(latexmk)], **kwargs)
+
+    monkeypatch.setattr(service, "_run_compiler", run_local_compiler)
     monkeypatch.setattr(
         "jobsearch_skill.cv_build.isolated_latex_environment",
         lambda root: {"PATH": str(bin_dir)},
     )
-    monkeypatch.setattr("jobsearch_skill.cv_build._BUILD_TIMEOUT_SECONDS", 0.15)
+    monkeypatch.setattr("jobsearch_skill.cv_build._BUILD_TIMEOUT_SECONDS", 1.0)
     monkeypatch.setattr("jobsearch_skill.cv_build._TERMINATE_GRACE_SECONDS", 0.1)
 
     with pytest.raises(CVBuildError) as caught:
         service.build(run.run_id)
 
     assert caught.value.reason_code == "cv_build_timeout"
+    assert ready.exists()
+    child_pid = int(ready.read_text(encoding="utf-8"))
+    child_deadline = time.monotonic() + 0.5
+    while True:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() >= child_deadline:
+            pytest.fail("compiler child remained alive after bounded group cleanup")
+        time.sleep(0.01)
     time.sleep(0.5)
     assert not sentinel.exists()
     assert hashlib.sha256(prepared.pdf.read_bytes()).hexdigest() == declared_pdf_hash
@@ -483,6 +710,45 @@ def test_build_timeout_kills_compiler_process_group_before_cleanup(
         "resume.tex",
     ]
     assert not (prepared.root / "output").exists()
+
+
+def test_timeout_cleanup_checks_the_group_after_the_leader_pipes_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ExitedLeader:
+        pid = 43123
+
+        def __init__(self) -> None:
+            self.communicate_timeouts: list[float] = []
+
+        def communicate(self, *, timeout: float):
+            self.communicate_timeouts.append(timeout)
+            return "", ""
+
+    leader = ExitedLeader()
+    group_alive = True
+    delivered: list[signal.Signals] = []
+
+    def fake_killpg(process_group: int, sent_signal: signal.Signals | int) -> None:
+        nonlocal group_alive
+        assert process_group == leader.pid
+        if sent_signal == 0:
+            if not group_alive:
+                raise ProcessLookupError
+            return
+        delivered.append(signal.Signals(sent_signal))
+        if sent_signal == signal.SIGKILL:
+            group_alive = False
+
+    monkeypatch.setattr("jobsearch_skill.cv_build.os.killpg", fake_killpg)
+    monkeypatch.setattr("jobsearch_skill.cv_build._TERMINATE_GRACE_SECONDS", 0.01)
+
+    CVService._terminate_process_group(leader)  # type: ignore[arg-type]
+
+    assert delivered == [signal.SIGTERM, signal.SIGKILL]
+    assert group_alive is False
+    assert leader.communicate_timeouts
+    assert all(timeout <= 0.01 for timeout in leader.communicate_timeouts)
 
 
 def test_verified_rebuild_revalidates_prepared_source_bytes(build_setup) -> None:
@@ -598,6 +864,41 @@ def test_build_rebinds_facts_to_manifest_and_run(build_setup, monkeypatch, field
     with pytest.raises(CVBuildError) as caught:
         service.build(run.run_id)
     assert caught.value.reason_code == "cv_facts_mismatch"
+
+
+def test_build_binds_prepared_artifacts_to_the_run_selected_cv(
+    build_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _, run, prepared, _, _ = build_setup
+    transplanted_name = "Transplanted CV"
+    manifest = service._read_manifest(prepared.manifest_path)
+    manifest["source_cv_name"] = transplanted_name
+    service._atomic_manifest(prepared.manifest_path, manifest)
+    source_hash = str(manifest["source_hash"])
+
+    facts_path = service.facts_path(run.run_id, source_hash)
+    facts = service.store.read_json(facts_path, "cv-facts.v1")
+    facts["cv_name"] = transplanted_name
+    service.store.write_json(facts_path, facts, "cv-facts.v1")
+
+    evidence_path = (
+        service.run_store.runs_dir
+        / run.run_id
+        / f"cv-evidence-{source_hash}.json"
+    )
+    evidence = service.store.read_json(evidence_path, "cv-evidence.v1")
+    evidence["cv_name"] = transplanted_name
+    service.store.write_json(evidence_path, evidence, "cv-evidence.v1")
+
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("compiler must not run for a transplanted CV")
+
+    monkeypatch.setattr(service, "_run_compiler", unexpected_run)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_manifest_mismatch"
 
 
 @pytest.mark.parametrize("output_kind", ["malformed", "zero", "encrypted", "no_text", "symlink"])

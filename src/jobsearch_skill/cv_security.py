@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_PORTABLE_COMPONENT_RE = re.compile(
+    r"[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\Z", re.ASCII
+)
 _COMMAND_RE = re.compile(r"\\(?P<name>[A-Za-z@]+|.)")
 _DOCUMENT_CLASS_RE = re.compile(
     r"\\documentclass(?:\s*\[(?P<options>[^\]]*)\])?\s*\{(?P<name>[^}]*)\}",
@@ -33,7 +36,14 @@ _PACKAGE_RE = re.compile(
 )
 _ENVIRONMENT_RE = re.compile(r"\\(?:begin|end)\s*\{(?P<name>[^}]*)\}")
 _GRAPHICS_RE = re.compile(
-    r"\\includegraphics\*?(?:\s*\[(?P<options>[^\]]*)\])?\s*\{(?P<name>[^}]*)\}",
+    r"\\includegraphics(?![A-Za-z@])\s*(?:\*\s*)?"
+    r"(?:\[(?P<options>[^\]]*)\]\s*)?\{(?P<name>[^}]*)\}",
+    re.IGNORECASE,
+)
+_FILE_LOADING_COMMAND_RE = re.compile(
+    r"\\(?P<name>addbibresource|attachfile|bibliography|include|includeanimation|"
+    r"includegraphics|includepdf|input|inputminted|loadglsentries|lstinputlisting|"
+    r"subfile|subimport|verbatiminput|import)(?![A-Za-z@])",
     re.IGNORECASE,
 )
 _SAFE_OPTION_RE = re.compile(r"[A-Za-z0-9 ,.=_:+\-/]*")
@@ -91,16 +101,22 @@ def security_error(reason_code: str = "cv_source_unsafe") -> CVBuildError:
 
 
 def is_safe_ref(value: str) -> bool:
-    if not value or value in {".", ".."} or "\\" in value or "\x00" in value:
+    if not value or "\\" in value or "\x00" in value:
         return False
     path = PurePosixPath(value)
     return (
         not path.is_absolute()
         and path.as_posix() == value
-        and all(
-            part not in {"", ".", ".."} and not part.startswith("-")
-            for part in path.parts
-        )
+        and all(_PORTABLE_COMPONENT_RE.fullmatch(part) is not None for part in path.parts)
+    )
+
+
+def is_portable_path(path: Path) -> bool:
+    """Return whether every non-anchor path component is portable."""
+
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    return bool(parts) and all(
+        _PORTABLE_COMPONENT_RE.fullmatch(part) is not None for part in parts
     )
 
 
@@ -228,7 +244,15 @@ def validate_tex_bytes(data: bytes, asset_refs: set[str]) -> str:
     for environment in _ENVIRONMENT_RE.finditer(source):
         if environment.group("name").strip() not in _SAFE_ENVIRONMENTS:
             raise security_error()
-    for graphics in _GRAPHICS_RE.finditer(source):
+    graphics_matches = list(_GRAPHICS_RE.finditer(source))
+    graphics_starts = {match.start() for match in graphics_matches}
+    for loading in _FILE_LOADING_COMMAND_RE.finditer(source):
+        if (
+            loading.group("name").casefold() != "includegraphics"
+            or loading.start() not in graphics_starts
+        ):
+            raise security_error()
+    for graphics in graphics_matches:
         name = graphics.group("name").strip()
         candidates = {name, f"{name}.png"}
         if (
@@ -294,22 +318,24 @@ def snapshot_declared_inputs(selection: CVSelection) -> tuple[InputSnapshot, ...
             reason = "cv_asset_outside_root" if path in selection.assets else "cv_source_invalid"
             raise security_error(reason) from error
         reference = relative.as_posix()
-        if not is_safe_ref(reference) or reference.casefold() in seen:
+        if not is_safe_ref(reference):
+            raise security_error()
+        if reference.casefold() in seen:
             raise security_error("cv_source_invalid")
         seen.add(reference.casefold())
         data = safe_read_relative(root, relative)
         if path in selection.assets:
-            if path.suffix.casefold() != ".png":
+            if path.suffix != ".png":
                 raise security_error()
             validate_png(data)
             kind = "asset"
             asset_refs.add(reference)
         elif path == selection.tex:
-            if path.suffix.casefold() != ".tex":
+            if path.suffix != ".tex":
                 raise security_error()
             kind = "tex"
         elif path == selection.pdf:
-            if path.suffix.casefold() != ".pdf" or not data.startswith(b"%PDF-"):
+            if path.suffix != ".pdf" or not data.startswith(b"%PDF-"):
                 raise security_error()
             kind = "pdf"
         else:

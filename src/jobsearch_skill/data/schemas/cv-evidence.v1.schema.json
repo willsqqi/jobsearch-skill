@@ -2,6 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/jobsearch-skill/schemas/cv-evidence.v1.schema.json",
   "title": "Private extracted CV evidence v1",
+  "$defs": {
+    "source_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.(?:tex|pdf|png)$"},
+    "evidence_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.(?:tex|pdf)$"}
+  },
   "type": "object",
   "properties": {
     "schema_version": {"const": 1},
@@ -13,7 +17,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "source_ref": {"type": "string", "pattern": "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$"},
+          "source_ref": {"$ref": "#/$defs/source_ref"},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         },
         "required": ["source_ref", "sha256"],
@@ -27,7 +31,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "source_ref": {"type": "string", "pattern": "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$"},
+          "source_ref": {"$ref": "#/$defs/evidence_ref"},
           "kind": {"enum": ["tex", "pdf"]},
           "text": {"type": "string", "minLength": 1}
         },

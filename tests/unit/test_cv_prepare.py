@@ -252,6 +252,65 @@ def test_prepare_rejects_active_tex_surfaces_before_copy(cv_setup, source: str) 
 
 
 @pytest.mark.parametrize(
+    "graphics",
+    [
+        r"\includegraphics *{/etc/passwd}",
+        "\\includegraphics% ignored comment\n * {../outside.png}",
+        r"\includegraphics * junk {declared.png}",
+        r"\includegraphics * [width=1cm] {undeclared.png}",
+        (
+            r"\includegraphics * {declared.png}"
+            r"\includegraphics * {/etc/passwd}"
+        ),
+    ],
+)
+def test_prepare_rejects_every_unconsumed_or_undeclared_graphics_variant(
+    cv_setup, graphics: str
+) -> None:
+    service, selection, run, _ = cv_setup
+    assert selection.tex is not None
+    selection.tex.write_text(
+        "\\documentclass{article}\n"
+        "\\usepackage{graphicx}\n"
+        "\\begin{document}\n"
+        f"{graphics}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CVBuildError, match="unsafe"):
+        service.prepare(run.run_id, selection)
+
+
+@pytest.mark.parametrize(
+    "graphics",
+    [
+        r"\includegraphics * {declared.png}",
+        r"\includegraphics * [width=1cm] {declared.png}",
+        "\\includegraphics% ignored comment\n * [width=1cm] {declared.png}",
+        r"\includegraphics {declared}",
+    ],
+)
+def test_prepare_accepts_fully_consumed_declared_graphics_variants(
+    cv_setup, graphics: str
+) -> None:
+    service, selection, run, _ = cv_setup
+    assert selection.tex is not None
+    selection.tex.write_text(
+        "\\documentclass{article}\n"
+        "\\usepackage{graphicx}\n"
+        "\\begin{document}\n"
+        f"{graphics}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    prepared = service.prepare(run.run_id, selection)
+
+    assert prepared.tex is not None
+
+
+@pytest.mark.parametrize(
     ("name", "content"),
     [
         (".latexmkrc", b"system('false')"),
@@ -276,16 +335,36 @@ def test_prepare_rejects_executable_or_invalid_declared_assets(
         service.prepare(run.run_id, replace(selection, assets=(asset,)))
 
 
-def test_prepare_rejects_option_like_declared_reference(cv_setup) -> None:
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "-e.tex",
+        ".resume.tex",
+        "resume name.tex",
+        "resume`curl`.tex",
+        "resume$(curl).tex",
+        "resume;curl.tex",
+        "resume'quote.tex",
+        'resume"quote.tex',
+        "resume*.tex",
+        "resume\n.tex",
+        "résumé.tex",
+        "resume.TEX",
+        "resume.txt",
+    ],
+)
+def test_prepare_rejects_nonportable_declared_reference(
+    cv_setup, filename: str
+) -> None:
     service, selection, _, root = cv_setup
     assert selection.tex is not None
-    option_like_tex = root / "-e.tex"
-    option_like_tex.write_bytes(selection.tex.read_bytes())
+    unsafe_tex = root / filename
+    unsafe_tex.write_bytes(selection.tex.read_bytes())
 
     with pytest.raises(CVBuildError) as caught:
-        service._declared_inputs(replace(selection, tex=option_like_tex))
+        service._declared_inputs(replace(selection, tex=unsafe_tex))
 
-    assert caught.value.reason_code == "cv_source_invalid"
+    assert caught.value.reason_code in {"cv_source_invalid", "cv_source_unsafe"}
 
 
 def test_prepare_hashes_and_copies_the_same_opened_bytes(
@@ -369,6 +448,81 @@ def test_repeat_prepare_revalidates_every_copied_source(cv_setup, mutation: str)
 
     with pytest.raises(CVBuildError, match="conflict"):
         service.prepare(run.run_id, selection)
+
+
+@pytest.mark.parametrize("extra", [".latexmkrc", "resume.aux", "extra-directory"])
+def test_repeat_prepare_rejects_every_extra_source_entry(cv_setup, extra: str) -> None:
+    service, selection, run, _ = cv_setup
+    prepared = service.prepare(run.run_id, selection)
+    path = prepared.source_dir / extra
+    if extra == "extra-directory":
+        path.mkdir(mode=0o700)
+    else:
+        path.write_text("inert local fixture\n", encoding="utf-8")
+        path.chmod(0o600)
+
+    with pytest.raises(CVBuildError, match="conflict"):
+        service.prepare(run.run_id, selection)
+
+
+@pytest.mark.parametrize("target", ["destination", "source", "manifest", "input"])
+def test_repeat_prepare_requires_private_modes(cv_setup, target: str) -> None:
+    service, selection, run, _ = cv_setup
+    prepared = service.prepare(run.run_id, selection)
+    assert prepared.tex is not None
+    path = {
+        "destination": prepared.root,
+        "source": prepared.source_dir,
+        "manifest": prepared.manifest_path,
+        "input": prepared.tex,
+    }[target]
+    path.chmod(0o755 if path.is_dir() else 0o644)
+
+    with pytest.raises(CVBuildError, match="conflict"):
+        service.prepare(run.run_id, selection)
+
+
+def test_repeat_prepare_requires_private_mode_for_nested_directories(cv_setup) -> None:
+    service, selection, run, root = cv_setup
+    nested_asset = root / "figures" / "diagram.png"
+    nested_asset.parent.mkdir(mode=0o700)
+    nested_asset.write_bytes(_PNG)
+    nested_selection = replace(selection, assets=(nested_asset,))
+    prepared = service.prepare(run.run_id, nested_selection)
+    (prepared.source_dir / "figures").chmod(0o755)
+
+    with pytest.raises(CVBuildError, match="conflict"):
+        service.prepare(run.run_id, nested_selection)
+
+
+def test_manifest_rejects_casefold_colliding_source_references(cv_setup) -> None:
+    service, selection, run, _ = cv_setup
+    prepared = service.prepare(run.run_id, selection)
+    manifest = dict(prepared.manifest)
+    source_hashes = dict(manifest["source_hashes"])
+    source_hashes["Declared.png"] = source_hashes["declared.png"]
+    manifest["source_hashes"] = source_hashes
+    manifest["copied_files"] = list(source_hashes)
+    manifest["source_hash"] = service._aggregate_hash(source_hashes)
+
+    with pytest.raises(CVBuildError, match="conflict"):
+        service._validate_manifest_semantics(manifest)
+
+
+def test_manifest_rejects_casefold_colliding_directory_references(cv_setup) -> None:
+    service, selection, run, _ = cv_setup
+    prepared = service.prepare(run.run_id, selection)
+    manifest = dict(prepared.manifest)
+    source_hashes = dict(manifest["source_hashes"])
+    digest = source_hashes["declared.png"]
+    source_hashes["Figures/first.png"] = digest
+    source_hashes["figures/second.png"] = digest
+    manifest["source_hashes"] = source_hashes
+    manifest["copied_files"] = list(source_hashes)
+    manifest["source_hash"] = service._aggregate_hash(source_hashes)
+
+    with pytest.raises(CVBuildError, match="conflict"):
+        service._validate_manifest_semantics(manifest)
 
 
 @pytest.mark.parametrize(

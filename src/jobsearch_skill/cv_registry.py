@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from jobsearch_skill.cv_models import CVSelection
-from jobsearch_skill.errors import CVSelectionError
+from jobsearch_skill.cv_security import (
+    is_safe_ref,
+    safe_read_relative,
+)
+from jobsearch_skill.errors import CVBuildError, CVSelectionError
 
 
 _FILE_LOADING_COMMAND = re.compile(
@@ -118,34 +123,90 @@ class CVRegistry:
         if not isinstance(value, str) or not value:
             raise self._error("cv_registry_invalid")
         raw = Path(value).expanduser()
-        candidate = raw.resolve() if raw.is_absolute() else (self._home / raw).resolve()
+        if raw.is_absolute():
+            candidate = Path(os.path.abspath(raw))
+            if any(ord(character) < 32 or ord(character) == 127 for character in value):
+                raise self._error("cv_registry_invalid")
+        else:
+            if not is_safe_ref(value):
+                raise self._error("cv_registry_invalid")
+            candidate = self._home / raw
+            self._validate_declared_directory(self._home, raw)
         if not raw.is_absolute() and not candidate.is_relative_to(self._home):
             raise self._error("cv_registry_invalid")
         return candidate
 
-    def _declared_file(self, root: Path, value: object) -> Path:
+    @staticmethod
+    def _validate_declared_directory(root: Path, relative: Path) -> None:
+        root_descriptor: int | None = None
+        opened_directories: list[int] = []
+        try:
+            if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+                raise OSError
+            root_descriptor = os.open(
+                root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            directory_descriptor = root_descriptor
+            for component in relative.parts:
+                directory_descriptor = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=directory_descriptor,
+                )
+                opened_directories.append(directory_descriptor)
+            if not stat.S_ISDIR(os.fstat(directory_descriptor).st_mode):
+                raise OSError
+        except OSError as error:
+            raise CVRegistry._error("cv_registry_invalid") from error
+        finally:
+            for descriptor in reversed(opened_directories):
+                os.close(descriptor)
+            if root_descriptor is not None:
+                os.close(root_descriptor)
+
+    def _declared_file(self, root: Path, value: object, *, suffix: str) -> Path:
         if not isinstance(value, str) or not value:
             raise self._error("cv_registry_invalid")
-        raw = Path(value).expanduser()
-        path = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
-        if not raw.is_absolute() and not path.is_relative_to(root):
+        raw = Path(value)
+        if raw.is_absolute() or not is_safe_ref(value) or raw.suffix != suffix:
             raise self._error("cv_registry_invalid")
-        self._readable_file(path, registered=True)
+        path = root / raw
+        try:
+            safe_read_relative(root, raw)
+        except CVBuildError as error:
+            raise self._error("cv_registry_invalid") from error
         return path
 
     def _registered_selection(self, entry: Mapping[str, object]) -> CVSelection:
         root = self._registry_root(entry.get("root"))
-        if not root.is_dir():
+        try:
+            root_info = root.stat(follow_symlinks=False)
+        except OSError as error:
+            raise self._error("cv_registry_invalid") from error
+        if not stat.S_ISDIR(root_info.st_mode):
             raise self._error("cv_registry_invalid")
-        tex = self._declared_file(root, entry["tex"]) if "tex" in entry else None
-        pdf = self._declared_file(root, entry["pdf"]) if "pdf" in entry else None
+        tex = (
+            self._declared_file(root, entry["tex"], suffix=".tex")
+            if "tex" in entry
+            else None
+        )
+        pdf = (
+            self._declared_file(root, entry["pdf"], suffix=".pdf")
+            if "pdf" in entry
+            else None
+        )
         assets_value = entry.get("assets")
         if not isinstance(assets_value, Sequence) or isinstance(
             assets_value, (str, bytes)
         ):
             raise self._error("cv_registry_invalid")
-        assets = tuple(self._declared_file(root, asset) for asset in assets_value)
-        if len(set(assets)) != len(assets):
+        assets = tuple(
+            self._declared_file(root, asset, suffix=".png")
+            for asset in assets_value
+        )
+        if len({asset.relative_to(root).as_posix().casefold() for asset in assets}) != len(
+            assets
+        ):
             raise self._error("cv_registry_invalid")
         name = entry.get("name")
         if not isinstance(name, str):
@@ -155,9 +216,11 @@ class CVRegistry:
     def _explicit_selection(
         self, reference: str, *, for_customization: bool
     ) -> CVSelection:
-        path = Path(reference).expanduser().resolve()
+        path = Path(os.path.abspath(Path(reference).expanduser()))
+        if not is_safe_ref(path.name):
+            raise self._error("cv_path_unavailable")
         self._readable_file(path, registered=False)
-        suffix = path.suffix.casefold()
+        suffix = path.suffix
         if suffix == ".pdf":
             if for_customization:
                 raise self._error("cv_customization_requires_tex")
@@ -173,20 +236,62 @@ class CVRegistry:
         raise self._error("cv_type_invalid")
 
     def _readable_file(self, path: Path, *, registered: bool) -> None:
+        self._read_file_bytes(path, registered=registered)
+
+    @staticmethod
+    def _read_file_bytes(path: Path, *, registered: bool) -> bytes:
+        descriptor: int | None = None
         try:
-            if not path.is_file() or not os.access(path, os.R_OK):
+            if not hasattr(os, "O_NOFOLLOW"):
                 raise OSError
-            with path.open("rb"):
-                pass
+            before = path.stat(follow_symlinks=False)
+            if not stat.S_ISREG(before.st_mode):
+                raise OSError
+            descriptor = os.open(
+                path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            )
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise OSError
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            if (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            ) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ):
+                raise OSError
+            data = b"".join(chunks)
+            if len(data) != opened.st_size:
+                raise OSError
+            return data
         except OSError as error:
             reason = "cv_registry_invalid" if registered else "cv_path_unavailable"
-            raise self._error(reason) from error
+            raise CVRegistry._error(reason) from error
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
     @staticmethod
     def _has_external_dependencies(path: Path) -> bool:
         try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
+            text = CVRegistry._read_file_bytes(
+                path, registered=False
+            ).decode("utf-8")
+        except (CVSelectionError, UnicodeError) as error:
             raise CVRegistry._error("cv_path_unavailable") from error
         uncommented = CVRegistry._strip_tex_comments(text)
         if _FILE_LOADING_COMMAND.search(uncommented) is not None:

@@ -277,7 +277,7 @@ def _preferences_template() -> dict[str, object]:
             {
                 "name": "unconfigured",
                 "root": "UNCONFIGURED",
-                "pdf": "UNCONFIGURED",
+                "pdf": "UNCONFIGURED.pdf",
                 "assets": [],
             }
         ],

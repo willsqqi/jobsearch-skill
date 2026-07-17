@@ -9,6 +9,7 @@ import signal
 import stat
 import subprocess
 import tempfile
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
@@ -128,10 +129,17 @@ class CVBuildMixin(CVServiceBase):
             self._raise_build_failure(
                 manifest_path, manifest, "cv_generated_output_unsafe"
             )
-        self._verify_prepared_sources(root, manifest, manifest_path)
         already_verified = bool(
             manifest.get("status") == "verified" and manifest.get("output_pdf")
         )
+        if not already_verified:
+            try:
+                self._cleanup_output_tree(root)
+            except CVBuildError:
+                self._raise_build_failure(
+                    manifest_path, manifest, "cv_generated_output_unsafe"
+                )
+        self._verify_prepared_sources(root, manifest, manifest_path)
         self._require_expected_source_inventory(root, manifest, manifest_path)
         expected_tex = manifest.get("expected_tex")
         if not isinstance(expected_tex, str) or not expected_tex:
@@ -332,8 +340,6 @@ class CVBuildMixin(CVServiceBase):
                 "cv_pdf_verification",
                 diagnostics=compiler_diagnostics,
             )
-        self._ensure_directory(output.parent, root=root)
-        copy_bytes_atomic(compiled_pdf_bytes, output)
         return self._verified_result(
             state,
             manifest_path,
@@ -341,6 +347,7 @@ class CVBuildMixin(CVServiceBase):
             output,
             expected_identity,
             diagnostics=compiler_diagnostics,
+            pdf_bytes=compiled_pdf_bytes,
         )
 
     def _stage_compiler_workspace(
@@ -400,10 +407,13 @@ class CVBuildMixin(CVServiceBase):
             )
         manifest = self._read_manifest(candidates[0])
         context = state.data.get("job_context")
+        selected_cv = state.data.get("selected_cv")
         if (
             manifest.get("run_id") != state.run_id
             or not isinstance(context, Mapping)
             or manifest.get("job_fingerprint") != context.get("job_fingerprint")
+            or not isinstance(selected_cv, Mapping)
+            or manifest.get("source_cv_name") != selected_cv.get("name")
         ):
             raise CVBuildError(
                 "cv_manifest_mismatch: prepared CV is unavailable",
@@ -422,6 +432,8 @@ class CVBuildMixin(CVServiceBase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=dict(env),
             start_new_session=True,
         )
@@ -441,20 +453,52 @@ class CVBuildMixin(CVServiceBase):
 
     @staticmethod
     def _terminate_process_group(process: subprocess.Popen[str]) -> None:
+        process_group = process.pid
+        term_deadline = time.monotonic() + _TERMINATE_GRACE_SECONDS
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            os.killpg(process_group, signal.SIGTERM)
         except ProcessLookupError:
-            pass
-        try:
-            process.communicate(timeout=_TERMINATE_GRACE_SECONDS)
+            try:
+                process.communicate(timeout=_TERMINATE_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
             return
+        remaining = max(0.0, term_deadline - time.monotonic())
+        try:
+            process.communicate(timeout=remaining)
         except subprocess.TimeoutExpired:
             pass
+        if CVBuildMixin._wait_for_process_group_exit(process_group, term_deadline):
+            return
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process_group, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        process.communicate()
+        kill_deadline = time.monotonic() + _TERMINATE_GRACE_SECONDS
+        try:
+            process.communicate(timeout=_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        CVBuildMixin._wait_for_process_group_exit(process_group, kill_deadline)
+
+    @staticmethod
+    def _process_group_exists(process_group: int) -> bool:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @staticmethod
+    def _wait_for_process_group_exit(process_group: int, deadline: float) -> bool:
+        while CVBuildMixin._process_group_exists(process_group):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.01, remaining))
+        return True
 
     def _verify_prepared_sources(
         self,
@@ -495,10 +539,12 @@ class CVBuildMixin(CVServiceBase):
         expected_identity: str,
         *,
         diagnostics: BuildDiagnostics = BuildDiagnostics(),
+        pdf_bytes: bytes | None = None,
     ) -> CVBuildResult:
         try:
-            self._require_regular_generated(output)
-            pdf_bytes = safe_read_relative(output.parent, Path(output.name))
+            if pdf_bytes is None:
+                self._require_regular_generated(output)
+                pdf_bytes = safe_read_relative(output.parent, Path(output.name))
             if not pdf_bytes:
                 raise OSError
             reader = PdfReader(BytesIO(pdf_bytes))
@@ -510,7 +556,18 @@ class CVBuildMixin(CVServiceBase):
             )
             if page_count < 1 or not extracted_text.strip():
                 raise PyPdfError("missing text")
-        except (OSError, PyPdfError, ValueError, CVBuildError):
+        except (
+            AttributeError,
+            CVBuildError,
+            EOFError,
+            IndexError,
+            KeyError,
+            OSError,
+            PyPdfError,
+            RecursionError,
+            TypeError,
+            ValueError,
+        ):
             self._raise_build_failure(
                 manifest_path,
                 manifest,
@@ -551,6 +608,7 @@ class CVBuildMixin(CVServiceBase):
                     page_count=page_count,
                 ),
             )
+        self._ensure_directory(output.parent, root=manifest_path.parent)
         copy_bytes_atomic(pdf_bytes, output)
         self._cleanup_compiler_outputs(
             manifest_path.parent, manifest, remove_artifact=False
@@ -771,21 +829,36 @@ class CVBuildMixin(CVServiceBase):
                 elif reference not in keep:
                     path.unlink()
             if remove_artifact:
-                output_dir = root / "output"
-                if output_dir.exists():
-                    self._require_beneath(output_dir, self.generated_root)
-                    output_paths = sorted(
-                        output_dir.rglob("*"),
-                        key=lambda path: len(path.parts),
-                        reverse=True,
-                    )
-                    for path in output_paths:
-                        info = path.stat(follow_symlinks=False)
-                        if stat.S_ISDIR(info.st_mode) and not path.is_symlink():
-                            path.rmdir()
-                        else:
-                            path.unlink()
-                    output_dir.rmdir()
+                self._cleanup_output_tree(root)
+        except OSError as error:
+            raise cv_build_error("cv_path_unsafe") from error
+
+    def _cleanup_output_tree(self, root: Path) -> None:
+        output_dir = root / "output"
+        self._require_beneath(output_dir, self.generated_root)
+        try:
+            output_info = output_dir.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise cv_build_error("cv_path_unsafe") from error
+        if output_dir.is_symlink() or not stat.S_ISDIR(output_info.st_mode):
+            raise cv_build_error("cv_path_unsafe")
+        try:
+            output_paths = sorted(
+                output_dir.rglob("*"),
+                key=lambda path: len(path.parts),
+                reverse=True,
+            )
+            for path in output_paths:
+                info = path.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode) and not path.is_symlink():
+                    path.rmdir()
+                elif stat.S_ISREG(info.st_mode) or path.is_symlink():
+                    path.unlink()
+                else:
+                    raise OSError("unsafe generated output")
+            output_dir.rmdir()
         except OSError as error:
             raise cv_build_error("cv_path_unsafe") from error
 

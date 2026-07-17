@@ -3,7 +3,10 @@
   "$id": "https://example.invalid/jobsearch-skill/schemas/cv-manifest.v1.schema.json",
   "title": "Prepared and built CV manifest v1",
   "$defs": {
-    "safe_ref": {"type": "string", "pattern": "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$"}
+    "portable_ref": {"type": "string", "pattern": "^[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?(?:/[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?)*$"},
+    "tex_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.tex$"},
+    "pdf_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.pdf$"},
+    "source_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.(?:tex|pdf|png)$"}
   },
   "type": "object",
   "properties": {
@@ -14,18 +17,18 @@
     "source_hashes": {
       "type": "object",
       "minProperties": 1,
-      "propertyNames": {"$ref": "#/$defs/safe_ref"},
+      "propertyNames": {"$ref": "#/$defs/source_ref"},
       "patternProperties": {
-        "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.(?:tex|pdf|png)$": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       },
       "additionalProperties": false
     },
     "job_fingerprint": {"type": "string"},
-    "copied_files": {"type": "array", "items": {"$ref": "#/$defs/safe_ref"}, "minItems": 1, "uniqueItems": true},
-    "expected_tex": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]},
-    "expected_pdf": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]},
+    "copied_files": {"type": "array", "items": {"$ref": "#/$defs/source_ref"}, "minItems": 1, "uniqueItems": true},
+    "expected_tex": {"anyOf": [{"$ref": "#/$defs/tex_ref"}, {"type": "null"}]},
+    "expected_pdf": {"anyOf": [{"$ref": "#/$defs/pdf_ref"}, {"type": "null"}]},
     "status": {"enum": ["prepared", "built", "verified", "failed"]},
-    "output_pdf": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]},
+    "output_pdf": {"anyOf": [{"$ref": "#/$defs/pdf_ref"}, {"type": "null"}]},
     "verification": {
       "type": ["object", "null"],
       "properties": {
@@ -33,7 +36,7 @@
         "page_count": {"type": "integer", "minimum": 0},
         "identity_present": {"type": "boolean"},
         "pdf_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
-        "log_ref": {"anyOf": [{"$ref": "#/$defs/safe_ref"}, {"type": "null"}]}
+        "log_ref": {"anyOf": [{"$ref": "#/$defs/portable_ref"}, {"type": "null"}]}
       },
       "required": ["verified", "page_count", "identity_present", "pdf_sha256", "log_ref"],
       "additionalProperties": false

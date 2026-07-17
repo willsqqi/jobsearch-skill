@@ -3,6 +3,7 @@
   "$id": "https://example.invalid/jobsearch-skill/schemas/cv-facts.v1.schema.json",
   "title": "Evidence-anchored CV facts v1",
   "$defs": {
+    "source_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.(?:tex|pdf|png)$"},
     "evidence_fact": {
       "type": "object",
       "properties": {"value": {"type": "string"}, "evidence_anchor": {"type": "string", "minLength": 1}},
@@ -38,7 +39,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "properties": {"source_ref": {"type": "string", "pattern": "^(?!/)(?!-)(?!.*\\/-)(?!.*//)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*\\/$).+$"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "properties": {"source_ref": {"$ref": "#/$defs/source_ref"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
         "required": ["source_ref", "sha256"],
         "additionalProperties": false
       },

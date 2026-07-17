@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import tempfile
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -209,6 +210,7 @@ class CVPrepareMixin(CVServiceBase):
         ):
             raise cv_build_error("cv_prepare_conflict")
         normalized: dict[str, str] = {}
+        casefold_inventory: dict[str, tuple[str, str]] = {}
         for reference, digest in source_hashes.items():
             if (
                 not isinstance(reference, str)
@@ -218,6 +220,18 @@ class CVPrepareMixin(CVServiceBase):
             ):
                 raise cv_build_error("cv_prepare_conflict")
             normalized[reference] = digest
+            inventory_entries = [
+                (parent.as_posix(), "directory")
+                for parent in Path(reference).parents
+                if parent != Path(".")
+            ]
+            inventory_entries.append((reference, "file"))
+            for inventory_reference, kind in inventory_entries:
+                folded = inventory_reference.casefold()
+                existing = casefold_inventory.get(folded)
+                if existing is not None and existing != (inventory_reference, kind):
+                    raise cv_build_error("cv_prepare_conflict")
+                casefold_inventory[folded] = (inventory_reference, kind)
         if list(copied_files) != list(normalized):
             raise cv_build_error("cv_prepare_conflict")
         if manifest.get("source_hash") != self._aggregate_hash(normalized):
@@ -227,26 +241,26 @@ class CVPrepareMixin(CVServiceBase):
         if expected_tex is not None and (
             not isinstance(expected_tex, str)
             or expected_tex not in normalized
-            or not expected_tex.casefold().endswith(".tex")
+            or Path(expected_tex).suffix != ".tex"
         ):
             raise cv_build_error("cv_prepare_conflict")
         if expected_pdf is not None and (
             not isinstance(expected_pdf, str)
             or expected_pdf not in normalized
-            or not expected_pdf.casefold().endswith(".pdf")
+            or Path(expected_pdf).suffix != ".pdf"
         ):
             raise cv_build_error("cv_prepare_conflict")
         tex_refs = [
             reference
             for reference in normalized
-            if reference.casefold().endswith(".tex")
+            if Path(reference).suffix == ".tex"
         ]
         if (expected_tex is None) != (not tex_refs) or len(tex_refs) > 1:
             raise cv_build_error("cv_prepare_conflict")
         pdf_refs = [
             reference
             for reference in normalized
-            if reference.casefold().endswith(".pdf")
+            if Path(reference).suffix == ".pdf"
         ]
         if (expected_pdf is None) != (not pdf_refs) or len(pdf_refs) > 1:
             raise cv_build_error("cv_prepare_conflict")
@@ -272,6 +286,58 @@ class CVPrepareMixin(CVServiceBase):
         source_hashes = manifest["source_hashes"]
         assert isinstance(source_hashes, Mapping)
         source_dir = destination / "source"
+        allowed_files = {str(reference) for reference in source_hashes}
+        allowed_directories = {
+            parent.as_posix()
+            for reference in allowed_files
+            for parent in Path(reference).parents
+            if parent != Path(".")
+        }
+        try:
+            for directory in (destination, source_dir):
+                info = directory.stat(follow_symlinks=False)
+                if (
+                    directory.is_symlink()
+                    or not stat.S_ISDIR(info.st_mode)
+                    or stat.S_IMODE(info.st_mode) != 0o700
+                ):
+                    raise OSError
+            manifest_path = destination / "manifest.yaml"
+            manifest_info = manifest_path.stat(follow_symlinks=False)
+            if (
+                manifest_path.is_symlink()
+                or not stat.S_ISREG(manifest_info.st_mode)
+                or stat.S_IMODE(manifest_info.st_mode) != 0o600
+            ):
+                raise OSError
+            observed_files: set[str] = set()
+            observed_directories: set[str] = set()
+            for path in source_dir.rglob("*"):
+                reference = path.relative_to(source_dir).as_posix()
+                info = path.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode) and not path.is_symlink():
+                    if (
+                        reference not in allowed_directories
+                        or stat.S_IMODE(info.st_mode) != 0o700
+                    ):
+                        raise OSError
+                    observed_directories.add(reference)
+                elif stat.S_ISREG(info.st_mode) and not path.is_symlink():
+                    if (
+                        reference not in allowed_files
+                        or stat.S_IMODE(info.st_mode) != 0o600
+                    ):
+                        raise OSError
+                    observed_files.add(reference)
+                else:
+                    raise OSError
+            if (
+                observed_files != allowed_files
+                or observed_directories != allowed_directories
+            ):
+                raise OSError
+        except OSError as error:
+            raise cv_build_error("cv_prepare_conflict") from error
         for reference, expected in source_hashes.items():
             try:
                 data = safe_read_relative(source_dir, Path(str(reference)))
@@ -306,7 +372,12 @@ class CVPrepareMixin(CVServiceBase):
     def _read_manifest(self, path: Path) -> dict[str, object]:
         self._require_beneath(path, self.generated_root)
         try:
-            if path.is_symlink() or not path.is_file():
+            info = path.stat(follow_symlinks=False)
+            if (
+                path.is_symlink()
+                or not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
                 raise OSError
             value = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, yaml.YAMLError) as error:

@@ -90,3 +90,17 @@
 - [x] Run 134 focused CV tests, full pytest (324 passed), Ruff, `git diff --check`, and a tracked-value/privacy scan.
 - [x] Build a fresh synthetic PDF, run `pdfinfo`, render every page with `pdftoppm`, inspect all PNGs, and audit hashes/modes/sidecar cleanup.
 - [x] Update the report, explicitly stage scoped files, commit a new fix commit, push `codex/jobsearch-v0.1`, and record the SHA.
+
+### Renewed final-review closure (2026-07-18)
+
+The follow-up implementation is specified in `2026-07-18-task-7-final-review-hardening.md` and preserves every constraint above.
+
+- [x] Replace permissive CV refs with one strict ASCII portable grammar and exact `.tex`/`.pdf`/`.png` source-kind contracts.
+- [x] Preserve declared paths through `lstat`/`O_NOFOLLOW` checks and reject registered or explicit symlink declarations.
+- [x] Require every file-loading command to be one fully consumed approved `\includegraphics` production.
+- [x] Probe and terminate the whole compiler process group independently of leader pipe state with no unbounded wait.
+- [x] Purge stale non-verified output and validate compiled PDF bytes completely in memory before publication.
+- [x] Bind the manifest/facts/evidence bundle to the run-selected CV name before compiler execution.
+- [x] Enforce exact repeat-prepare inventory, case-fold namespace uniqueness, and `0700`/`0600` modes.
+- [x] Run focused tests, the full suite, Ruff, diff/privacy checks, and a fresh real PDF render/filesystem audit.
+- [ ] Record the independent final Critical/Important-only review and pushed commit SHAs in `.superpowers/sdd/task-7-report.md`.
