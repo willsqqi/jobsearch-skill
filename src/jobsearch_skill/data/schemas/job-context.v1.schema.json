@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/job-context.v1.schema.json",
+  "title": "Normalized job context v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "job_url": {"type": "string", "format": "uri"},
+    "canonical_url": {"type": "string", "format": "uri"},
+    "company": {"type": "string"},
+    "role": {"type": "string"},
+    "location": {"type": "string"},
+    "employment_type": {"type": "string"},
+    "description": {"type": "string", "minLength": 1},
+    "responsibilities": {"type": "array", "items": {"type": "string"}},
+    "required_qualifications": {"type": "array", "items": {"type": "string"}},
+    "preferred_qualifications": {"type": "array", "items": {"type": "string"}},
+    "technologies": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "captured_at": {"type": "string", "format": "date-time"},
+    "job_fingerprint": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "required": ["schema_version", "job_url", "canonical_url", "company", "role", "location", "employment_type", "description", "responsibilities", "required_qualifications", "preferred_qualifications", "technologies", "captured_at", "job_fingerprint"],
+  "additionalProperties": false
+}

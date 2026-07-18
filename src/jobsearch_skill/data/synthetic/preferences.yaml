@@ -1,0 +1,21 @@
+schema_version: 1
+default_cv: SWE
+cvs:
+  - name: SWE
+    root: synthetic-cv
+    tex: resume.tex
+    pdf: resume.pdf
+    assets: []
+  - name: DE
+    root: synthetic-cv
+    tex: de-resume.tex
+    pdf: de-resume.pdf
+    assets: []
+browser: builtin
+platform_priority: [workday]
+submission_mode: manual
+generated_artifacts:
+  naming_template: synthetic-systems
+  retain_days: 1
+  retain_failed_builds: true
+  retain_build_logs: true

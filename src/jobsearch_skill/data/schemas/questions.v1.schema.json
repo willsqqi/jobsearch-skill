@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/questions.v1.schema.json",
+  "title": "Reviewed question memory v1",
+  "$defs": {
+    "source": {"enum": ["profile", "user", "codex_reviewed", "imported"]},
+    "scope": {
+      "type": "object",
+      "properties": {
+        "kind": {"enum": ["global", "company", "role", "job"]},
+        "company": {"type": "string"},
+        "role": {"type": "string"},
+        "job_fingerprint": {"type": "string"}
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "qualifiers": {
+      "type": "object",
+      "properties": {
+        "negated": {"type": "boolean"},
+        "jurisdiction": {"type": "string", "minLength": 1},
+        "time_period": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1}
+      },
+      "required": ["negated"],
+      "additionalProperties": false
+    },
+    "answer": {
+      "type": "object",
+      "properties": {
+        "value": {"oneOf": [{"type": "boolean"}, {"type": "string"}, {"type": "number"}, {"type": "array", "items": {"type": "string"}}]},
+        "source": {"$ref": "#/$defs/source"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      },
+      "required": ["value", "source", "updated_at"],
+      "additionalProperties": false
+    },
+    "history": {
+      "type": "object",
+      "properties": {
+        "value": {"oneOf": [{"type": "boolean"}, {"type": "string"}, {"type": "number"}, {"type": "array", "items": {"type": "string"}}]},
+        "source": {"$ref": "#/$defs/source"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      },
+      "required": ["value", "source", "updated_at"],
+      "additionalProperties": false
+    },
+    "question": {
+      "type": "object",
+      "properties": {
+        "canonical_id": {"type": "string", "pattern": "^q_[a-zA-Z0-9_-]+$"},
+        "canonical_wording": {"type": "string", "minLength": 1},
+        "observed_wordings": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+        "answer_type": {"enum": ["boolean", "string", "selection", "multi_selection", "number", "date", "free_text"]},
+        "scope": {"$ref": "#/$defs/scope"},
+        "qualifiers": {"$ref": "#/$defs/qualifiers"},
+        "topic_tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "role_tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "answer": {"$ref": "#/$defs/answer"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "history": {"type": "array", "items": {"$ref": "#/$defs/history"}}
+      },
+      "required": ["canonical_id", "canonical_wording", "observed_wordings", "answer_type", "scope", "qualifiers", "topic_tags", "role_tags", "answer", "created_at", "updated_at", "history"],
+      "allOf": [
+        {"if": {"properties": {"answer_type": {"const": "boolean"}}}, "then": {"properties": {"answer": {"properties": {"value": {"type": "boolean"}}}, "history": {"items": {"properties": {"value": {"type": "boolean"}}}}}}},
+        {"if": {"properties": {"answer_type": {"enum": ["string", "selection", "date", "free_text"]}}}, "then": {"properties": {"answer": {"properties": {"value": {"type": "string"}}}, "history": {"items": {"properties": {"value": {"type": "string"}}}}}}},
+        {"if": {"properties": {"answer_type": {"const": "multi_selection"}}}, "then": {"properties": {"answer": {"properties": {"value": {"type": "array", "items": {"type": "string"}}}}, "history": {"items": {"properties": {"value": {"type": "array", "items": {"type": "string"}}}}}}}},
+        {"if": {"properties": {"answer_type": {"const": "number"}}}, "then": {"properties": {"answer": {"properties": {"value": {"type": "number"}}}, "history": {"items": {"properties": {"value": {"type": "number"}}}}}}}
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "questions": {"type": "array", "items": {"$ref": "#/$defs/question"}}
+  },
+  "required": ["schema_version", "questions"],
+  "additionalProperties": false
+}

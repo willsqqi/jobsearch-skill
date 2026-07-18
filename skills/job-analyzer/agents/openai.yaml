@@ -1,0 +1,4 @@
+interface:
+  display_name: "Job Analyzer"
+  short_description: "Analyze job fit and recommend a CV"
+  default_prompt: "Use $job-analyzer to analyze this job and recommend a CV."

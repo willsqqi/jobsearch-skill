@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "run_id": "run_synthetic",
+  "cv_name": "Avery Example CV",
+  "source_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source_hashes": [],
+  "identity": {
+    "full_name": {
+      "value": "Avery Example",
+      "evidence_anchor": "Avery Example"
+    },
+    "email": {
+      "value": "avery@example.invalid",
+      "evidence_anchor": "avery@example.invalid"
+    }
+  },
+  "education": [
+    {
+      "institution": "Example University",
+      "degree": "B.S. Computer Science",
+      "start_date": "2020",
+      "end_date": "2024",
+      "evidence_anchor": "Example University"
+    }
+  ],
+  "employment": [
+    {
+      "company": "Synthetic Systems",
+      "title": "Software Engineering Intern",
+      "start_date": "2023",
+      "end_date": "2024",
+      "highlights": ["Built Python API services"],
+      "evidence_anchor": "Built Python API services"
+    }
+  ],
+  "skills": [
+    {
+      "name": "Python",
+      "category": "Programming",
+      "evidence_anchor": "Python"
+    }
+  ],
+  "projects": [
+    {
+      "name": "API Reliability Toolkit",
+      "description": "Created Python API health checks and reports.",
+      "technologies": ["Python"],
+      "evidence_anchor": "API Reliability Toolkit"
+    }
+  ]
+}

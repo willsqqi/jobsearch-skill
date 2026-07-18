@@ -1,0 +1,76 @@
+[
+  {
+    "schema_version": 1,
+    "run_id": "run_synthetic",
+    "platform": "workday",
+    "page_id": "personal-information",
+    "url": "https://example.invalid/workday/personal-information",
+    "fields": [
+      {"field_id": "first-name", "label": "First name", "context": "Personal information", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "identity.first_name", "options": []},
+      {"field_id": "email", "label": "Email address", "context": "Personal information", "control_type": "email", "answer_type": "string", "required": true, "semantic_key": "contact.email", "options": []},
+      {"field_id": "address", "label": "Address", "context": "Personal information", "control_type": "textarea", "answer_type": "free_text", "required": false, "options": []},
+      {"field_id": "available-date", "label": "Available date", "context": "Personal information", "control_type": "date", "answer_type": "date", "required": false, "options": []}
+    ]
+  },
+  {
+    "schema_version": 1,
+    "run_id": "run_synthetic",
+    "platform": "workday",
+    "page_id": "education-employment",
+    "url": "https://example.invalid/workday/education-employment",
+    "fields": [
+      {"field_id": "education-0-school", "label": "School", "context": "Education 1", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "education.0.institution", "options": []},
+      {"field_id": "education-0-start", "label": "Start date", "context": "Education 1", "control_type": "date", "answer_type": "date", "required": true, "semantic_key": "education.0.start_date", "options": []},
+      {"field_id": "education-1-school", "label": "School", "context": "Education 2", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "education.1.institution", "options": []},
+      {"field_id": "education-1-start", "label": "Start date", "context": "Education 2", "control_type": "date", "answer_type": "date", "required": true, "semantic_key": "education.1.start_date", "options": []},
+      {"field_id": "employment-0-company", "label": "Company", "context": "Employment 1", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.0.company", "options": []},
+      {"field_id": "employment-0-title", "label": "Job title", "context": "Employment 1", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.0.title", "options": []},
+      {"field_id": "employment-1-company", "label": "Company", "context": "Employment 2", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.1.company", "options": []},
+      {"field_id": "employment-1-title", "label": "Job title", "context": "Employment 2", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.1.title", "options": []}
+    ]
+  },
+  {
+    "schema_version": 1,
+    "run_id": "run_synthetic",
+    "platform": "workday",
+    "page_id": "application-questions",
+    "url": "https://example.invalid/workday/application-questions",
+    "fields": [
+      {"field_id": "known-question", "label": "Are you authorized to work?", "context": "Application question", "control_type": "radio", "answer_type": "selection", "required": true, "options": ["Yes", "No"], "question_reuse": {"canonical_source_id": "q_synthetic_authorized", "wording": "Are you authorized to work?", "scope": {"kind": "global"}, "qualifiers": {"negated": false}}},
+      {"field_id": "unseen-question", "label": "Tell us something new", "context": "Application question", "control_type": "textarea", "answer_type": "free_text", "required": true, "options": []}
+    ]
+  },
+  {
+    "schema_version": 1,
+    "run_id": "run_synthetic",
+    "platform": "workday",
+    "page_id": "voluntary-self-identification",
+    "url": "https://example.invalid/workday/voluntary-self-identification",
+    "fields": [
+      {"field_id": "gender", "label": "Gender", "context": "Voluntary self-identification", "control_type": "select", "answer_type": "selection", "required": false, "semantic_key": "demographics.gender", "options": ["Synthetic", "Decline"]},
+      {"field_id": "disability", "label": "Disability status", "context": "Voluntary self-identification", "control_type": "select", "answer_type": "selection", "required": false, "semantic_key": "disability.status", "options": ["Synthetic", "Decline"]},
+      {"field_id": "veteran", "label": "Veteran status", "context": "Voluntary self-identification", "control_type": "select", "answer_type": "selection", "required": false, "semantic_key": "veteran.status", "options": ["Synthetic", "Decline"]}
+    ]
+  },
+  {
+    "schema_version": 1,
+    "run_id": "run_synthetic",
+    "platform": "workday",
+    "page_id": "upload",
+    "url": "https://example.invalid/workday/upload",
+    "fields": [
+      {"field_id": "resume-upload", "label": "Resume", "context": "Upload", "control_type": "file", "answer_type": "string", "required": true, "semantic_key": "identity.full_name", "options": []}
+    ]
+  },
+  {
+    "schema_version": 1,
+    "run_id": "run_synthetic",
+    "platform": "workday",
+    "page_id": "review",
+    "url": "https://example.invalid/workday/review",
+    "fields": [
+      {"field_id": "attest", "label": "I certify this information", "context": "Review", "control_type": "checkbox", "answer_type": "boolean", "required": true, "semantic_key": "legal_attestations.accurate_information", "options": ["I certify"]},
+      {"field_id": "final-submit", "label": "Submit", "context": "Review", "control_type": "submit", "answer_type": "string", "required": true, "options": []}
+    ]
+  }
+]

@@ -1,0 +1,21 @@
+schema_version: 1
+identity:
+  first_name: Casey
+  last_name: Example
+contact:
+  email: casey@example.invalid
+address: {}
+work_authorization:
+  USA:
+    authorized: true
+    sponsorship_required: false
+compensation:
+  target: 100
+  currency: USD
+  period: year
+demographics: {}
+disability: {}
+veteran: {}
+legal_attestations:
+  accurate_information: true
+links: {}

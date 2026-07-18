@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/form-snapshot.v1.schema.json",
+  "title": "Semantic form snapshot v1",
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "properties": {
+        "kind": {"enum": ["global", "company", "role", "job"]},
+        "company": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "job_fingerprint": {"type": "string", "minLength": 1}
+      },
+      "required": ["kind"],
+      "additionalProperties": false,
+      "oneOf": [
+        {"properties": {"kind": {"const": "global"}}, "not": {"anyOf": [{"required": ["company"]}, {"required": ["role"]}, {"required": ["job_fingerprint"]}]}},
+        {"properties": {"kind": {"const": "company"}}, "required": ["company"], "not": {"anyOf": [{"required": ["role"]}, {"required": ["job_fingerprint"]}]}},
+        {"properties": {"kind": {"const": "role"}}, "required": ["role"], "not": {"anyOf": [{"required": ["company"]}, {"required": ["job_fingerprint"]}]}},
+        {"properties": {"kind": {"const": "job"}}, "required": ["job_fingerprint"], "not": {"anyOf": [{"required": ["company"]}, {"required": ["role"]}]}}
+      ]
+    },
+    "question_reuse": {
+      "type": "object",
+      "properties": {
+        "canonical_source_id": {"type": "string", "pattern": "^q_[A-Za-z0-9_-]+$"},
+        "wording": {"type": "string", "minLength": 1},
+        "scope": {"$ref": "#/$defs/scope"},
+        "qualifiers": {
+          "type": "object",
+          "properties": {
+            "negated": {"type": "boolean"},
+            "jurisdiction": {"type": "string", "minLength": 1},
+            "time_period": {"type": "string", "minLength": 1},
+            "unit": {"type": "string", "minLength": 1}
+          },
+          "required": ["negated"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["canonical_source_id", "wording", "scope", "qualifiers"],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "platform": {"enum": ["workday"]},
+    "page_id": {"type": "string", "minLength": 1},
+    "url": {"type": "string", "format": "uri"},
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field_id": {"type": "string", "minLength": 1},
+          "label": {"type": "string", "minLength": 1},
+          "context": {"type": "string"},
+          "control_type": {"enum": ["text", "textarea", "email", "tel", "number", "date", "select", "radio", "checkbox", "file", "submit"]},
+          "answer_type": {"enum": ["boolean", "string", "selection", "multi_selection", "number", "date", "free_text"]},
+          "required": {"type": "boolean"},
+          "semantic_key": {"type": "string", "minLength": 1},
+          "question_reuse": {"$ref": "#/$defs/question_reuse"},
+          "options": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "observed_value": {"oneOf": [{"type": "boolean"}, {"type": "string"}, {"type": "number"}, {"type": "array", "items": {"type": "string"}}, {"type": "null"}]}
+        },
+        "required": ["field_id", "label", "control_type", "answer_type", "required", "options"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "run_id", "platform", "page_id", "url", "fields"],
+  "additionalProperties": false
+}

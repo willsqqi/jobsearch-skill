@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Install or update Jobsearch in a private runtime."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_HOME_POINTER = PLUGIN_ROOT / ".jobsearch-home"
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Install Jobsearch into a private runtime.")
+    parser.add_argument("--home", required=True, help="Private Jobsearch home directory.")
+    parser.add_argument("--python", default=sys.executable, help="Python 3.11+ interpreter to use.")
+    return parser.parse_args(argv)
+
+
+def ensure_python_version(python: str) -> None:
+    result = subprocess.run(
+        [python, "-c", "import sys; raise SystemExit(sys.version_info < (3, 11))"],
+        check=False,
+    )
+    if result.returncode:
+        raise SystemExit("--python must point to Python 3.11 or newer")
+
+
+def write_home_pointer(private_home: Path) -> None:
+    DEFAULT_HOME_POINTER.write_text(f"{private_home}\n", encoding="utf-8")
+    os.chmod(DEFAULT_HOME_POINTER, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    private_home = Path(args.home).expanduser().resolve()
+    ensure_python_version(args.python)
+    private_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(private_home, 0o700)
+
+    runtime = private_home / "runtime"
+    subprocess.run([args.python, "-m", "venv", str(runtime)], check=True)
+    runtime_python = runtime / "bin" / "python"
+    subprocess.run(
+        [
+            str(runtime_python),
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            str(PLUGIN_ROOT),
+        ],
+        check=True,
+    )
+    write_home_pointer(private_home)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

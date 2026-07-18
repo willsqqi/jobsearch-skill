@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/run-state.v1.schema.json",
+  "title": "Resumable run state v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "job_context": {
+      "type": "object",
+      "properties": {
+        "schema_version": {"const": 1},
+        "job_url": {"type": "string", "format": "uri"},
+        "canonical_url": {"type": "string", "format": "uri"},
+        "company": {"type": "string"},
+        "role": {"type": "string"},
+        "location": {"type": "string"},
+        "employment_type": {"type": "string"},
+        "description": {"type": "string"},
+        "responsibilities": {"type": "array", "items": {"type": "string"}},
+        "required_qualifications": {"type": "array", "items": {"type": "string"}},
+        "preferred_qualifications": {"type": "array", "items": {"type": "string"}},
+        "technologies": {"type": "array", "items": {"type": "string"}},
+        "captured_at": {"type": "string", "format": "date-time"},
+        "job_fingerprint": {"type": "string"}
+      },
+      "required": ["schema_version", "job_url", "canonical_url", "company", "role", "location", "employment_type", "description", "responsibilities", "required_qualifications", "preferred_qualifications", "technologies", "captured_at", "job_fingerprint"],
+      "additionalProperties": false
+    },
+    "phase": {"enum": ["created", "analyzed", "cv_selected", "cv_ready", "applying", "upload_pending", "review_pending", "submission_pending", "submitted_confirmed", "stopped"]},
+    "selected_cv": {
+      "type": ["object", "null"],
+      "properties": {"name": {"type": "string"}, "path": {"type": "string"}, "customized": {"type": "boolean"}},
+      "required": ["name", "path", "customized"],
+      "additionalProperties": false
+    },
+    "analysis_ref": {"type": ["string", "null"]},
+    "generated_artifacts": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "completed_page_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "pending_manual_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"kind": {"enum": ["upload", "authentication", "captcha", "review", "submit"]}, "field_id": {"type": "string"}, "reason_code": {"type": "string"}},
+        "required": ["kind", "reason_code"],
+        "additionalProperties": false
+      }
+    },
+    "unresolved_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "learning_changes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "application_url": {"type": ["string", "null"], "format": "uri"},
+    "application_metadata": {
+      "type": "object",
+      "properties": {"workday_id": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "application_id": {"type": ["string", "null"]},
+    "application_identity": {"type": ["string", "null"]},
+    "workday_id": {"type": "string"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "required": ["schema_version", "run_id", "job_context", "phase", "selected_cv", "analysis_ref", "generated_artifacts", "completed_page_ids", "pending_manual_actions", "unresolved_fields", "learning_changes", "application_url", "application_metadata", "application_id", "application_identity", "workday_id", "created_at", "updated_at"],
+  "additionalProperties": false
+}

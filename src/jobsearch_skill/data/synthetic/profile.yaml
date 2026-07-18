@@ -1,0 +1,51 @@
+schema_version: 1
+identity:
+  first_name: Avery
+  middle_name: ""
+  last_name: Example
+  preferred_name: Avery
+  full_name: Avery Example
+  pronouns: they/them
+contact:
+  email: avery@example.invalid
+  phone: "+1-555-0100"
+  phone_country_code: "+1"
+address:
+  line1: 1 Synthetic Systems
+  line2: ""
+  city: Synthetic Systems
+  region: Synthetic Systems
+  postal_code: "00000"
+  country: Synthetic Systems
+work_authorization:
+  SYN:
+    authorized: true
+    status: Synthetic Systems
+    sponsorship_required: false
+    future_sponsorship_required: false
+    notes: Synthetic Systems
+compensation:
+  target: 1
+  minimum: 1
+  currency: SYN
+  period: year
+  notes: Synthetic Systems
+demographics:
+  gender: Synthetic Systems
+  race_ethnicity: [Synthetic Systems]
+  sexual_orientation: Synthetic Systems
+disability:
+  status: Synthetic Systems
+  effective_date: "2026-07-17"
+veteran:
+  status: Synthetic Systems
+  protected_categories: [Synthetic Systems]
+legal_attestations:
+  accurate_information: true
+  background_check_consent: false
+  non_compete_restriction: false
+links:
+  linkedin: https://example.invalid/avery
+  github: https://example.invalid/avery-example
+  portfolio: https://example.invalid/portfolio
+  website: https://example.invalid

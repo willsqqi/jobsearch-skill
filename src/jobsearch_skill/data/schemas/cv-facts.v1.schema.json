@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/cv-facts.v1.schema.json",
+  "title": "Evidence-anchored CV facts v1",
+  "$defs": {
+    "source_ref": {"type": "string", "pattern": "^(?:[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?/)*[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?\\.(?:tex|pdf|png)$"},
+    "evidence_fact": {
+      "type": "object",
+      "properties": {"value": {"type": "string"}, "evidence_anchor": {"type": "string", "minLength": 1}},
+      "required": ["value", "evidence_anchor"],
+      "additionalProperties": false
+    },
+    "dated_fact": {
+      "type": "object",
+      "properties": {
+        "institution": {"type": "string"},
+        "company": {"type": "string"},
+        "degree": {"type": "string"},
+        "field_of_study": {"type": "string"},
+        "title": {"type": "string"},
+        "location": {"type": "string"},
+        "start_date": {"type": "string"},
+        "end_date": {"type": "string"},
+        "highlights": {"type": "array", "items": {"type": "string"}},
+        "evidence_anchor": {"type": "string", "minLength": 1}
+      },
+      "required": ["start_date", "end_date", "evidence_anchor"],
+      "anyOf": [{"required": ["institution"]}, {"required": ["company", "title"]}],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "cv_name": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_hashes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"source_ref": {"$ref": "#/$defs/source_ref"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "required": ["source_ref", "sha256"],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "identity": {
+      "type": "object",
+      "properties": {"full_name": {"$ref": "#/$defs/evidence_fact"}, "email": {"$ref": "#/$defs/evidence_fact"}, "phone": {"$ref": "#/$defs/evidence_fact"}, "location": {"$ref": "#/$defs/evidence_fact"}, "links": {"type": "array", "items": {"$ref": "#/$defs/evidence_fact"}}},
+      "required": ["full_name"],
+      "additionalProperties": false
+    },
+    "education": {"type": "array", "items": {"$ref": "#/$defs/dated_fact"}},
+    "employment": {"type": "array", "items": {"$ref": "#/$defs/dated_fact"}},
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "category": {"type": "string"}, "evidence_anchor": {"type": "string", "minLength": 1}},
+        "required": ["name", "evidence_anchor"],
+        "additionalProperties": false
+      }
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "description": {"type": "string"}, "technologies": {"type": "array", "items": {"type": "string"}}, "evidence_anchor": {"type": "string", "minLength": 1}},
+        "required": ["name", "description", "technologies", "evidence_anchor"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schema_version", "run_id", "cv_name", "source_hash", "source_hashes", "identity", "education", "employment", "skills", "projects"],
+  "additionalProperties": false
+}

@@ -1,0 +1,26 @@
+schema_version: 1
+default_cv: SWE
+cvs:
+  - name: SWE
+    root: cvs/swe
+    tex: resume.tex
+    pdf: resume.pdf
+    assets: [figures/architecture.png, figures/results.png]
+  - name: DE
+    root: cvs/de
+    tex: resume.tex
+    pdf: resume.pdf
+    assets: []
+  - name: Research
+    root: cvs/research
+    tex: resume.tex
+    pdf: resume.pdf
+    assets: []
+browser: builtin
+platform_priority: [workday]
+submission_mode: manual
+generated_artifacts:
+  naming_template: "{company}-{role}-{run_id}"
+  retain_days: 30
+  retain_failed_builds: true
+  retain_build_logs: true

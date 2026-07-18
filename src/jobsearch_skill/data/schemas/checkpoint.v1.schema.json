@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/checkpoint.v1.schema.json",
+  "title": "One resumable run checkpoint v1",
+  "type": "object",
+  "properties": {
+    "target_phase": {"enum": ["created", "analyzed", "cv_selected", "cv_ready", "applying", "upload_pending", "review_pending", "submission_pending", "submitted_confirmed", "stopped"]},
+    "completed_page_ids": {"type": "array", "items": {"type": "string"}},
+    "generated_artifacts": {"type": "array", "items": {"type": "string"}},
+    "pending_manual_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"kind": {"enum": ["upload", "authentication", "captcha", "review", "submit"]}, "field_id": {"type": "string"}, "reason_code": {"type": "string"}},
+        "required": ["kind", "reason_code"],
+        "additionalProperties": false
+      }
+    },
+    "unresolved_fields": {"type": "array", "items": {"type": "string"}},
+    "learning_changes": {"type": "array", "items": {"type": "string"}},
+    "application_url": {"type": "string", "format": "uri"},
+    "application_metadata": {
+      "type": "object",
+      "properties": {"workday_id": {"type": "string"}},
+      "additionalProperties": false
+    }
+  },
+  "required": ["target_phase"],
+  "additionalProperties": false
+}

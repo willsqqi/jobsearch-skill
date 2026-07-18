@@ -1,0 +1,4 @@
+interface:
+  display_name: "CV Customizer"
+  short_description: "Tailor a CV using verified evidence only"
+  default_prompt: "Use $cv-customizer to tailor the selected CV for this job."
