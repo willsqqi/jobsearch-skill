@@ -6,7 +6,7 @@ The isolated runtime lives at the sibling `.jobsearch-eval` path derived from th
 
 ## Case contract
 
-Every `evals/<skill>/case.json` validates against `rubric.schema.json` and declares `prompt`, `allowed_inputs`, `expected_behaviors`, `forbidden_behaviors`, and `minimum_pass_count`. The agent may read only the declared inputs plus the one named skill during the forward run.
+Every `evals/<skill>/case.json` validates against `rubric.schema.json` and declares `prompt`, `allowed_inputs`, `expected_behaviors`, `forbidden_behaviors`, and `minimum_pass_count`. The agent may read only the declared inputs plus the one named skill during the forward run. It may also read runtime-generated evidence and state artifacts returned by successful permitted synthetic runtime commands required by that skill. This allowance applies only under the marked sibling evaluation home; it does not permit undeclared repository inputs, real data, arbitrary private-home files, or artifacts from failed or unapproved commands.
 
 ## Fresh-agent protocol
 

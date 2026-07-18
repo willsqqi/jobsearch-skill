@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from jobsearch_skill.jobs import make_job_context
+
 
 @pytest.fixture
 def installed_jobsearch(tmp_path: Path) -> Callable[..., subprocess.CompletedProcess[str]]:
@@ -76,6 +78,166 @@ def test_synthetic_bootstrap_is_private_ready_and_byte_stable(
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in tracked)
 
 
+def test_synthetic_bootstrap_registers_the_two_evaluation_cvs(
+    tmp_path: Path,
+    installed_jobsearch: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    home = tmp_path / ".jobsearch-eval"
+    assert installed_jobsearch("--home", str(home), "bootstrap", "--synthetic").returncode == 0
+
+    result = installed_jobsearch("--home", str(home), "cv", "list")
+
+    assert result.returncode == 0
+    cvs = json.loads(result.stdout)["cvs"]
+    assert [cv["name"] for cv in cvs] == ["SWE", "DE"]
+    assert (home / "synthetic-cv" / "de-resume.tex").is_file()
+    assert (home / "synthetic-cv" / "de-resume.pdf").is_file()
+
+
+def test_synthetic_runtime_stores_unselected_candidate_facts_through_cli(
+    tmp_path: Path,
+    installed_jobsearch: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    home = tmp_path / ".jobsearch-eval"
+    assert installed_jobsearch("--home", str(home), "bootstrap", "--synthetic").returncode == 0
+    context_path = home / "candidate-job-context.json"
+    context_path.write_text(
+        json.dumps(
+            make_job_context(
+                job_url="https://example.invalid/jobs/candidate-facts",
+                company="Synthetic Systems",
+                role="Platform Software Engineer",
+                description="Public synthetic role.",
+            )
+        ),
+        encoding="utf-8",
+    )
+    started = installed_jobsearch(
+        "--home", str(home), "run", "start", "--job-context", str(context_path)
+    )
+    run_id = json.loads(started.stdout)["result"]["run_id"]
+
+    inspected = installed_jobsearch(
+        "--home", str(home), "cv", "inspect", "--run-id", run_id, "--cv", "SWE"
+    )
+    evidence_ref = json.loads(inspected.stdout)["result"]["evidence_ref"]
+    evidence = json.loads((home / evidence_ref).read_text(encoding="utf-8"))
+    facts_path = home / "candidate-input.json"
+    facts_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "cv_name": "SWE",
+                "source_hash": evidence["source_hash"],
+                "source_hashes": evidence["source_hashes"],
+                "identity": {
+                    "full_name": {
+                        "value": "Avery Example",
+                        "evidence_anchor": "Avery Example",
+                    }
+                },
+                "education": [],
+                "employment": [],
+                "skills": [
+                    {
+                        "name": "Python",
+                        "evidence_anchor": "Python REST APIs",
+                    }
+                ],
+                "projects": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    stored = installed_jobsearch(
+        "--home",
+        str(home),
+        "cv",
+        "candidate-facts",
+        "--run-id",
+        run_id,
+        "--cv",
+        "SWE",
+        "--input",
+        str(facts_path),
+    )
+    shown = installed_jobsearch(
+        "--home", str(home), "run", "show", "--run-id", run_id
+    )
+
+    assert inspected.returncode == 0, inspected.stdout
+    assert stored.returncode == 0, stored.stdout
+    assert json.loads(stored.stdout)["result"]["facts_ref"].startswith(
+        f"runs/{run_id}/cv-candidates/"
+    )
+    state = json.loads(shown.stdout)["result"]
+    assert state["phase"] == "created"
+    assert state["selected_cv"] is None
+    assert state["generated_artifacts"] == []
+
+
+def test_candidate_cli_failures_use_versioned_value_free_envelopes(
+    tmp_path: Path,
+    installed_jobsearch: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    home = tmp_path / "PRIVATE_CANDIDATE_HOME_CANARY" / ".jobsearch-eval"
+    assert installed_jobsearch("--home", str(home), "bootstrap", "--synthetic").returncode == 0
+    context_path = home / "job-context.json"
+    context_path.write_text(
+        json.dumps(
+            make_job_context(
+                job_url="https://example.invalid/jobs/candidate-errors",
+                company="Synthetic Systems",
+                role="Platform Software Engineer",
+                description="Public synthetic role.",
+            )
+        ),
+        encoding="utf-8",
+    )
+    started = installed_jobsearch(
+        "--home", str(home), "run", "start", "--job-context", str(context_path)
+    )
+    run_id = json.loads(started.stdout)["result"]["run_id"]
+
+    missing_cv = installed_jobsearch(
+        "--home", str(home), "cv", "inspect", "--run-id", run_id, "--cv", "PRIVATE_CV_CANARY"
+    )
+    missing_input = installed_jobsearch(
+        "--home",
+        str(home),
+        "cv",
+        "candidate-facts",
+        "--run-id",
+        run_id,
+        "--cv",
+        "SWE",
+        "--input",
+        str(home / "PRIVATE_INPUT_CANARY.json"),
+    )
+
+    assert missing_cv.returncode != 0
+    assert missing_input.returncode != 0
+    assert json.loads(missing_cv.stdout) == {
+        "schema_version": 1,
+        "ok": False,
+        "command": "cv.inspect",
+        "reason_code": "cv_name_missing",
+        "warnings": [],
+    }
+    assert json.loads(missing_input.stdout) == {
+        "schema_version": 1,
+        "ok": False,
+        "command": "cv.candidate-facts",
+        "reason_code": "storage_read",
+        "warnings": [],
+    }
+    assert "PRIVATE_CANDIDATE_HOME_CANARY" not in missing_cv.stdout + missing_input.stdout
+    assert "PRIVATE_CV_CANARY" not in missing_cv.stdout
+    assert "PRIVATE_INPUT_CANARY" not in missing_input.stdout
+
+
 def test_synthetic_bootstrap_refuses_to_replace_an_ordinary_profile(
     tmp_path: Path,
     installed_jobsearch: Callable[..., subprocess.CompletedProcess[str]],
@@ -101,6 +263,21 @@ def test_synthetic_bootstrap_rejects_a_changed_pdf(
     assert installed_jobsearch("--home", str(home), "bootstrap", "--synthetic").returncode == 0
     pdf = home / "synthetic-cv" / "resume.pdf"
     pdf.write_bytes(b"%PDF-1.4\nchanged but nonempty\n")
+
+    result = installed_jobsearch("--home", str(home), "bootstrap", "--synthetic")
+
+    assert result.returncode == 3
+    assert json.loads(result.stdout)["reason_code"] == "synthetic_bootstrap_conflict"
+
+
+def test_synthetic_bootstrap_rejects_a_valid_pdf_swapped_between_cvs(
+    tmp_path: Path,
+    installed_jobsearch: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    home = tmp_path / ".jobsearch-eval"
+    assert installed_jobsearch("--home", str(home), "bootstrap", "--synthetic").returncode == 0
+    cv_root = home / "synthetic-cv"
+    (cv_root / "de-resume.pdf").write_bytes((cv_root / "resume.pdf").read_bytes())
 
     result = installed_jobsearch("--home", str(home), "bootstrap", "--synthetic")
 

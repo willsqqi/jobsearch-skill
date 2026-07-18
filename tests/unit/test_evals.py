@@ -21,3 +21,12 @@ def test_every_evaluation_case_matches_the_public_rubric() -> None:
         assert len(forbidden) == len(set(forbidden))
         assert set(expected).isdisjoint(forbidden)
         assert case["minimum_pass_count"] <= len(expected)
+
+
+def test_forward_protocol_allows_only_declared_inputs_and_synthetic_runtime_outputs() -> None:
+    protocol = (Path(__file__).parents[2] / "evals" / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "runtime-generated evidence and state artifacts" in protocol
+    assert "successful permitted synthetic runtime commands" in protocol

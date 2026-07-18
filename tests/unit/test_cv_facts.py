@@ -127,6 +127,32 @@ def test_cv_facts_require_matching_source_hash_and_literal_evidence(evidence_set
         service.store_facts(run.run_id, selection, unsupported)
 
 
+def test_candidate_facts_are_source_bound_without_selecting_a_cv(evidence_setup) -> None:
+    service, selection, selected_run, fixture_root = evidence_setup
+    run = service.run_store.start(selected_run.data["job_context"])
+
+    evidence = service.candidate_evidence(run.run_id, selection)
+    facts = _facts(fixture_root, evidence)
+    stored = service.store_candidate_facts(run.run_id, selection, facts)
+
+    state = service.run_store.get(run.run_id)
+    assert state.phase == "created"
+    assert state.data["selected_cv"] is None
+    assert state.data["generated_artifacts"] == []
+    assert "/cv-candidates/" in evidence.path.as_posix()
+    candidate_path = service.candidate_facts_path(
+        run.run_id, selection.name, evidence.source_hash
+    )
+    assert stored == facts
+    assert candidate_path.is_file()
+    assert stat.S_IMODE(candidate_path.stat().st_mode) == 0o600
+
+    unsupported = deepcopy(facts)
+    unsupported["projects"][0]["evidence_anchor"] = "Kubernetes production cluster"
+    with pytest.raises(CVFactsError, match="evidence anchor"):
+        service.store_candidate_facts(run.run_id, selection, unsupported)
+
+
 @pytest.mark.parametrize("category", ["education", "employment", "projects"])
 def test_each_claim_category_requires_a_nonempty_literal_anchor(
     evidence_setup, category: str

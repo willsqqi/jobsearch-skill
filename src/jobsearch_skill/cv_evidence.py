@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import stat
 from collections.abc import Mapping, Sequence
@@ -13,6 +14,7 @@ from pypdf.errors import PyPdfError
 
 from jobsearch_skill.cv_core import CVServiceBase, now
 from jobsearch_skill.cv_models import CVEvidence, CVSelection
+from jobsearch_skill.cv_security import InputSnapshot
 from jobsearch_skill.errors import CVBuildError, CVFactsError, SchemaValidationError, StorageError
 
 
@@ -83,6 +85,44 @@ class CVEvidenceMixin(CVServiceBase):
             expected_sources=sources,
         )
 
+    def candidate_evidence(self, run_id: str, selection: CVSelection) -> CVEvidence:
+        """Extract evidence for one registered CV without selecting it in run state."""
+
+        state = self.run_store.require_open(run_id)
+        if state.phase not in {"created", "analyzed"} or state.data.get("selected_cv") is not None:
+            raise self._evidence_error("cv_evidence_selection")
+        source_hashes, declared = self._declared_inputs(selection)
+        source_hash = self._aggregate_hash(source_hashes)
+        directory = self._candidate_directory(run_id, selection.name)
+        self._ensure_directory(directory, root=self.run_store.runs_dir)
+        path = directory / f"cv-evidence-{source_hash}.json"
+        self._require_beneath(path, self.run_store.runs_dir)
+        sources = self._sources(declared)
+        if not sources:
+            raise self._evidence_error("cv_evidence_empty")
+        if path.exists():
+            document = self.store.read_json(path, "cv-evidence.v1")
+        else:
+            document = {
+                "schema_version": 1,
+                "run_id": run_id,
+                "cv_name": selection.name,
+                "source_hash": source_hash,
+                "source_hashes": self._hash_entries(source_hashes),
+                "sources": sources,
+                "created_at": now(),
+            }
+            self.store.write_json(path, document, "cv-evidence.v1")
+        return self._evidence_from_document(
+            path,
+            document,
+            source_hashes,
+            run_id=run_id,
+            cv_name=selection.name,
+            source_hash=source_hash,
+            expected_sources=sources,
+        )
+
     def store_facts(
         self,
         run_id: str,
@@ -90,22 +130,7 @@ class CVEvidenceMixin(CVServiceBase):
         facts: Mapping[str, object],
     ) -> dict[str, object]:
         evidence = self.evidence(run_id, selection)
-        candidate = dict(facts)
-        try:
-            self.store.registry.validate("cv-facts.v1", candidate)
-        except SchemaValidationError as error:
-            raise self._facts_error("cv_facts_invalid") from error
-        if (
-            candidate.get("run_id") != run_id
-            or candidate.get("cv_name") != selection.name
-            or candidate.get("source_hash") != evidence.source_hash
-            or candidate.get("source_hashes")
-            != self._hash_entries(evidence.source_hashes)
-        ):
-            raise self._facts_error("cv_facts_source_mismatch")
-        for anchor in self._evidence_anchors(candidate):
-            if not anchor or anchor not in evidence.extracted_text:
-                raise self._facts_error("cv_facts_anchor")
+        candidate = self._validated_facts(run_id, selection, evidence, facts)
         path = self.facts_path(run_id, evidence.source_hash)
         if path.exists():
             existing = self.store.read_json(path, "cv-facts.v1")
@@ -119,6 +144,25 @@ class CVEvidenceMixin(CVServiceBase):
             run_id,
             {"target_phase": state.phase, "generated_artifacts": [reference]},
         )
+        return candidate
+
+    def store_candidate_facts(
+        self,
+        run_id: str,
+        selection: CVSelection,
+        facts: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Validate and stage facts for a CV without binding it as the run selection."""
+
+        evidence = self.candidate_evidence(run_id, selection)
+        candidate = self._validated_facts(run_id, selection, evidence, facts)
+        path = self.candidate_facts_path(run_id, selection.name, evidence.source_hash)
+        if path.exists():
+            existing = self.store.read_json(path, "cv-facts.v1")
+            if existing != candidate:
+                raise self._facts_error("cv_facts_conflict")
+            return existing
+        self.store.write_json(path, candidate, "cv-facts.v1")
         return candidate
 
     def facts_for_selected_run(
@@ -200,6 +244,65 @@ class CVEvidenceMixin(CVServiceBase):
         path = self.run_store.runs_dir / run_id / f"cv-facts-{source_hash}.json"
         self._require_beneath(path, self.run_store.runs_dir)
         return path
+
+    def candidate_facts_path(self, run_id: str, cv_name: str, source_hash: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
+            raise self._facts_error("cv_facts_source_mismatch")
+        path = self._candidate_directory(run_id, cv_name) / f"cv-facts-{source_hash}.json"
+        self._require_beneath(path, self.run_store.runs_dir)
+        return path
+
+    def _candidate_directory(self, run_id: str, cv_name: str) -> Path:
+        name_hash = hashlib.sha256(cv_name.encode("utf-8")).hexdigest()[:24]
+        path = self.run_store.runs_dir / run_id / "cv-candidates" / name_hash
+        self._require_beneath(path, self.run_store.runs_dir)
+        return path
+
+    def _validated_facts(
+        self,
+        run_id: str,
+        selection: CVSelection,
+        evidence: CVEvidence,
+        facts: Mapping[str, object],
+    ) -> dict[str, object]:
+        candidate = dict(facts)
+        try:
+            self.store.registry.validate("cv-facts.v1", candidate)
+        except SchemaValidationError as error:
+            raise self._facts_error("cv_facts_invalid") from error
+        if (
+            candidate.get("run_id") != run_id
+            or candidate.get("cv_name") != selection.name
+            or candidate.get("source_hash") != evidence.source_hash
+            or candidate.get("source_hashes") != self._hash_entries(evidence.source_hashes)
+        ):
+            raise self._facts_error("cv_facts_source_mismatch")
+        for anchor in self._evidence_anchors(candidate):
+            if not anchor or anchor not in evidence.extracted_text:
+                raise self._facts_error("cv_facts_anchor")
+        return candidate
+
+    def _sources(self, declared: Sequence[InputSnapshot]) -> list[dict[str, str]]:
+        sources: list[dict[str, str]] = []
+        for snapshot in declared:
+            reference = snapshot.relative.as_posix()
+            if snapshot.kind == "tex":
+                sources.append(
+                    {
+                        "source_ref": reference,
+                        "kind": "tex",
+                        "text": snapshot.data.decode("utf-8"),
+                    }
+                )
+            elif snapshot.kind == "pdf":
+                sources.append(
+                    {
+                        "source_ref": reference,
+                        "kind": "pdf",
+                        "text": self._pdf_text(snapshot.data),
+                    }
+                )
+        return sources
 
     def _evidence_from_document(
         self,

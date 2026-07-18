@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import tomllib
@@ -366,7 +367,12 @@ def bootstrap_private_home(home: Path, registry: SchemaRegistry) -> list[Path]:
     ]
 
 
-def _synthetic_resources() -> tuple[dict[str, object], dict[str, object], dict[str, object], str]:
+def _synthetic_resources() -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, str],
+]:
     root = resources.files("jobsearch_skill.data.synthetic")
     documents: list[dict[str, object]] = []
     try:
@@ -375,22 +381,44 @@ def _synthetic_resources() -> tuple[dict[str, object], dict[str, object], dict[s
             if not isinstance(value, dict):
                 raise ValueError("synthetic document is not an object")
             documents.append(value)
-        tex = root.joinpath("resume.tex").read_text(encoding="utf-8")
+        tex_sources = {
+            candidate.name: candidate.read_text(encoding="utf-8")
+            for candidate in root.iterdir()
+            if candidate.name.endswith(".tex")
+        }
+        if not tex_sources:
+            raise ValueError("synthetic CV sources are unavailable")
     except (FileNotFoundError, ModuleNotFoundError, TypeError, UnicodeError, yaml.YAMLError, ValueError) as error:
         raise ConfigurationError(
             "synthetic_resources: packaged synthetic resources are unavailable",
             reason_code="synthetic_resources",
         ) from error
-    return documents[0], documents[1], documents[2], tex
+    return documents[0], documents[1], documents[2], tex_sources
 
 
-def _verify_synthetic_pdf(pdf: bytes) -> None:
+def _synthetic_pdf_anchor(tex: str) -> str:
+    matches = re.findall(
+        r"^% jobsearch-pdf-anchor: ([A-Za-z0-9][A-Za-z0-9 -]{0,127})$",
+        tex,
+        flags=re.MULTILINE,
+    )
+    if len(matches) != 1 or matches[0] not in tex:
+        raise ValueError("synthetic PDF anchor is unavailable")
+    return matches[0]
+
+
+def _verify_synthetic_pdf(pdf: bytes, expected_anchor: str) -> None:
     try:
         reader = PdfReader(BytesIO(pdf))
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
     except (EOFError, IndexError, KeyError, OSError, PyPdfError, TypeError, ValueError) as error:
         raise ValueError("synthetic PDF is invalid") from error
-    if reader.is_encrypted or len(reader.pages) < 1 or "Avery Example" not in text:
+    if (
+        reader.is_encrypted
+        or len(reader.pages) < 1
+        or "Avery Example" not in text
+        or expected_anchor not in text
+    ):
         raise ValueError("synthetic PDF verification failed")
 
 
@@ -407,6 +435,7 @@ def _compile_synthetic_cv(tex: str) -> bytes:
 
     try:
         validate_tex_bytes(tex.encode("utf-8"), set())
+        expected_anchor = _synthetic_pdf_anchor(tex)
         with tempfile.TemporaryDirectory(prefix="jobsearch-synthetic-") as name:
             root = Path(name)
             root.chmod(0o700)
@@ -424,7 +453,7 @@ def _compile_synthetic_cv(tex: str) -> bytes:
             if completed.returncode != 0:
                 raise OSError("synthetic CV compiler failed")
             pdf = safe_read_relative(root, Path("resume.pdf"))
-            _verify_synthetic_pdf(pdf)
+            _verify_synthetic_pdf(pdf, expected_anchor)
             return pdf
     except (
         CVBuildError,
@@ -449,7 +478,7 @@ def bootstrap_synthetic_home(home: Path, registry: SchemaRegistry) -> list[Path]
     resolved_home = home.expanduser().resolve()
     marker = resolved_home / _SYNTHETIC_MARKER
     profile_path = resolved_home / "profile.yaml"
-    profile, preferences, questions, tex = _synthetic_resources()
+    profile, preferences, questions, tex_sources = _synthetic_resources()
     expected_documents = (
         (profile_path, profile, "profile.v1"),
         (resolved_home / "preferences.yaml", preferences, "preferences.v1"),
@@ -485,35 +514,53 @@ def bootstrap_synthetic_home(home: Path, registry: SchemaRegistry) -> list[Path]
                 )
         cv_root = resolved_home / "synthetic-cv"
         try:
-            persisted_pdf = safe_read_relative(cv_root, Path("resume.pdf"))
-            if (
-                safe_read_relative(cv_root, Path("resume.tex")) != tex.encode("utf-8")
-                or not persisted_pdf
-            ):
-                raise OSError("synthetic CV changed")
-            _verify_synthetic_pdf(persisted_pdf)
+            for filename, tex in tex_sources.items():
+                persisted_pdf = safe_read_relative(
+                    cv_root, Path(filename).with_suffix(".pdf")
+                )
+                if (
+                    safe_read_relative(cv_root, Path(filename)) != tex.encode("utf-8")
+                    or not persisted_pdf
+                ):
+                    raise OSError("synthetic CV changed")
+                _verify_synthetic_pdf(persisted_pdf, _synthetic_pdf_anchor(tex))
         except (CVBuildError, OSError, ValueError) as error:
             raise ConfigurationError(
                 "synthetic_bootstrap_conflict: synthetic CV was changed",
                 reason_code="synthetic_bootstrap_conflict",
             ) from error
-        return [marker, *(path for path, _, _ in expected_documents), cv_root / "resume.tex", cv_root / "resume.pdf"]
+        cv_paths = [
+            cv_root / filename
+            for source in tex_sources
+            for filename in (source, Path(source).with_suffix(".pdf").name)
+        ]
+        return [marker, *(path for path, _, _ in expected_documents), *cv_paths]
 
-    pdf = _compile_synthetic_cv(tex)
+    pdfs = {
+        Path(filename).with_suffix(".pdf").name: _compile_synthetic_cv(tex)
+        for filename, tex in tex_sources.items()
+    }
     created = bootstrap_private_home(resolved_home, registry)
     store = SafeStore(registry, resolved_home / "backups")
     for path, value, contract in expected_documents:
         store.write_yaml(path, value, contract)
     cv_root = resolved_home / "synthetic-cv"
     _make_private_directories(cv_root)
-    store.write_text(cv_root / "resume.tex", tex, _exact_text(tex))
-    copy_bytes_atomic(pdf, cv_root / "resume.pdf")
+    for filename, tex in tex_sources.items():
+        store.write_text(cv_root / filename, tex, _exact_text(tex))
+    for filename, pdf in pdfs.items():
+        copy_bytes_atomic(pdf, cv_root / filename)
     store.write_text(
         marker,
         _SYNTHETIC_MARKER_TEXT,
         _exact_text(_SYNTHETIC_MARKER_TEXT),
     )
-    return [*created, marker, cv_root / "resume.tex", cv_root / "resume.pdf"]
+    cv_paths = [
+        cv_root / filename
+        for source in tex_sources
+        for filename in (source, Path(source).with_suffix(".pdf").name)
+    ]
+    return [*created, marker, *cv_paths]
 
 
 def _validate_applications(path: Path, registry: SchemaRegistry) -> None:

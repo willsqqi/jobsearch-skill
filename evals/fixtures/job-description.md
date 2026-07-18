@@ -2,6 +2,10 @@
 
 Synthetic Systems is hiring a fictional platform software engineer. This fixture is public test data and is not a real opening.
 
+- URL: https://example.invalid/jobs/platform-software-engineer
+- Location: Synthetic Systems
+- Employment type: full-time
+
 ## Required qualifications
 
 - Build and maintain Python REST APIs.

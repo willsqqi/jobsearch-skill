@@ -82,7 +82,7 @@ def _success_envelope(command: str, result: dict[str, object]) -> dict[str, obje
 
 def _versioned_command(arguments: list[str]) -> str | None:
     allowed = {
-        "cv": {"evidence", "facts", "prepare", "build"},
+        "cv": {"inspect", "candidate-facts", "evidence", "facts", "prepare", "build"},
         "run": {"start", "analyze", "select-cv", "checkpoint", "show"},
         "application": {"record"},
         "form": {"plan"},
@@ -144,9 +144,16 @@ def main(argv: list[str] | None = None) -> int:
     resolve.add_argument("--for-customization", action="store_true")
     cv_evidence = cv_commands.add_parser("evidence")
     cv_evidence.add_argument("--run-id", required=True)
+    cv_inspect = cv_commands.add_parser("inspect")
+    cv_inspect.add_argument("--run-id", required=True)
+    cv_inspect.add_argument("--cv", required=True)
     cv_facts = cv_commands.add_parser("facts")
     cv_facts.add_argument("--run-id", required=True)
     cv_facts.add_argument("--input", required=True, type=Path)
+    cv_candidate_facts = cv_commands.add_parser("candidate-facts")
+    cv_candidate_facts.add_argument("--run-id", required=True)
+    cv_candidate_facts.add_argument("--cv", required=True)
+    cv_candidate_facts.add_argument("--input", required=True, type=Path)
     cv_prepare = cv_commands.add_parser("prepare")
     cv_prepare.add_argument("--run-id", required=True)
     cv_build = cv_commands.add_parser("build")
@@ -215,7 +222,9 @@ def main(argv: list[str] | None = None) -> int:
         requires_run_id = (
             args.command == "application"
             or args.command == "form"
-            or args.command == "cv" and args.cv_command in {"evidence", "facts", "prepare", "build"}
+            or args.command == "cv"
+            and args.cv_command
+            in {"inspect", "candidate-facts", "evidence", "facts", "prepare", "build"}
             or args.command == "run"
             and args.run_command != "start"
             and not getattr(args, "latest_open", False)
@@ -252,7 +261,16 @@ def main(argv: list[str] | None = None) -> int:
             _emit({"command": "validate", "missing_fields": missing, "status": status})
             return 3 if missing else 0
         if args.command == "cv":
-            if args.cv_command not in {"list", "resolve", "evidence", "facts", "prepare", "build"}:
+            if args.cv_command not in {
+                "list",
+                "resolve",
+                "inspect",
+                "candidate-facts",
+                "evidence",
+                "facts",
+                "prepare",
+                "build",
+            }:
                 _emit({"reason_code": "invalid_arguments", "status": "error"})
                 return 2
             home = resolve_private_home(args.home, Path.cwd(), default_config_path())
@@ -282,6 +300,34 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             runs = RunStore(store, home / "runs")
             state = runs.require_open(args.run_id)
+            service = CVService(home, store, runs, cvs)
+            command = f"cv.{args.cv_command}"
+            if args.cv_command in {"inspect", "candidate-facts"}:
+                selection = cvs.resolve(args.cv)
+                if args.cv_command == "inspect":
+                    evidence = service.candidate_evidence(args.run_id, selection)
+                    result = {
+                        "evidence_ref": evidence.reference,
+                        "source_count": len(evidence.source_hashes),
+                        "status": "stored",
+                    }
+                else:
+                    facts = service.store_candidate_facts(
+                        args.run_id, selection, load_mapping(args.input)
+                    )
+                    source_hash = str(facts.get("source_hash"))
+                    facts_path = service.candidate_facts_path(
+                        args.run_id, selection.name, source_hash
+                    )
+                    result = {
+                        "facts_ref": facts_path.relative_to(home).as_posix(),
+                        "education_count": len(facts.get("education", [])),
+                        "employment_count": len(facts.get("employment", [])),
+                        "project_count": len(facts.get("projects", [])),
+                        "status": "stored",
+                    }
+                _emit(_success_envelope(command, result))
+                return 0
             selected = state.data.get("selected_cv")
             selected_name = selected.get("name") if isinstance(selected, dict) else None
             if not isinstance(selected_name, str):
@@ -290,8 +336,6 @@ def main(argv: list[str] | None = None) -> int:
                     reason_code="cv_selection_mismatch",
                 )
             selection = cvs.resolve(selected_name)
-            service = CVService(home, store, runs, cvs)
-            command = f"cv.{args.cv_command}"
             if args.cv_command == "evidence":
                 evidence = service.evidence(args.run_id, selection)
                 result = {
@@ -566,7 +610,8 @@ def main(argv: list[str] | None = None) -> int:
         parent_command = getattr(args, "command", None)
         if parent_command in {"run", "application", "form"} or (
             parent_command == "cv"
-            and getattr(args, "cv_command", None) in {"evidence", "facts", "prepare", "build"}
+            and getattr(args, "cv_command", None)
+            in {"inspect", "candidate-facts", "evidence", "facts", "prepare", "build"}
         ):
             child = getattr(args, f"{parent_command}_command", None)
             command = f"{parent_command}.{child}" if child else parent_command

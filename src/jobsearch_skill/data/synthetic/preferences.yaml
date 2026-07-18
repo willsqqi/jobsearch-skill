@@ -1,10 +1,15 @@
 schema_version: 1
-default_cv: Synthetic Systems
+default_cv: SWE
 cvs:
-  - name: Synthetic Systems
+  - name: SWE
     root: synthetic-cv
     tex: resume.tex
     pdf: resume.pdf
+    assets: []
+  - name: DE
+    root: synthetic-cv
+    tex: de-resume.tex
+    pdf: de-resume.pdf
     assets: []
 browser: builtin
 platform_priority: [workday]
