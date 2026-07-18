@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "id": "cv-customizer",
+  "prompt": "Customize the SWE CV for this job.",
+  "allowed_inputs": [
+    {
+      "path": "evals/fixtures/job-description.md",
+      "description": "The complete public synthetic job description requesting Kubernetes."
+    },
+    {
+      "path": "evals/fixtures/swe-evidence.md",
+      "description": "Public synthetic evidence for the approved SWE CV, which has no Kubernetes experience."
+    }
+  ],
+  "expected_behaviors": [
+    {
+      "id": "bind_approved_cv",
+      "description": "Treat SWE as the explicit post-analysis CV decision and bind that registered CV to the analyzed run."
+    },
+    {
+      "id": "resolve_customizable_source",
+      "description": "Require the registered SWE LaTeX source to be resolvable for customization before editing."
+    },
+    {
+      "id": "preserve_originals",
+      "description": "Record original source hashes and leave every registered source and PDF byte-for-byte unchanged."
+    },
+    {
+      "id": "stage_generated_copy",
+      "description": "Prepare and modify only a private generated copy owned by the current run."
+    },
+    {
+      "id": "evidence_backed_edits",
+      "description": "Use only evidence-backed reordering or rewriting and explicitly leave Kubernetes as a gap."
+    },
+    {
+      "id": "persist_claim_evidence",
+      "description": "Persist a claim-to-evidence record whose output claims occur in the customized source and whose anchors bind to exact validated CV-fact records and original CV evidence."
+    },
+    {
+      "id": "compile_verified_pdf",
+      "description": "Compile the customized source through the isolated runtime and verify a readable identity-bound PDF."
+    },
+    {
+      "id": "return_exact_artifact",
+      "description": "Return the exact private generated PDF path only after runtime verification."
+    },
+    {
+      "id": "checkpoint_cv_ready",
+      "description": "Checkpoint the verified manifest and finish in phase cv_ready with SWE selected as customized."
+    }
+  ],
+  "forbidden_behaviors": [
+    {
+      "id": "edit_registered_original",
+      "description": "Modify any registered CV source, PDF, asset, or preference."
+    },
+    {
+      "id": "invent_kubernetes",
+      "description": "Add or imply Kubernetes experience that is absent from the supplied evidence."
+    },
+    {
+      "id": "silent_fallback",
+      "description": "Silently use the original CV or another artifact after a customization or build failure."
+    },
+    {
+      "id": "present_unverified_pdf",
+      "description": "Present a PDF path that has not passed runtime verification."
+    },
+    {
+      "id": "start_application",
+      "description": "Open, fill, upload to, or submit an application."
+    }
+  ],
+  "minimum_pass_count": 9
+}
