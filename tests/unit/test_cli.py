@@ -114,6 +114,7 @@ def test_cli_usage_error_is_one_json_envelope(capsys) -> None:
     [
         ("run", "/PRIVATE_RUN_PATH_CANARY"),
         ("application", "PRIVATE_APPLICATION_NAME_CANARY"),
+        ("form", "--PRIVATE_FORM_TOKEN_CANARY"),
         ("questions", "--PRIVATE_QUESTION_TOKEN_CANARY"),
     ],
 )
@@ -134,7 +135,7 @@ def test_unknown_nested_commands_emit_fixed_value_free_envelope(
     assert canary not in captured.out
 
 
-@pytest.mark.parametrize("family", ["run", "application", "questions"])
+@pytest.mark.parametrize("family", ["run", "application", "form", "questions"])
 def test_missing_nested_command_uses_fixed_parent_id(
     capsys: pytest.CaptureFixture[str], family: str
 ) -> None:

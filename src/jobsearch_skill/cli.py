@@ -10,7 +10,8 @@ from pathlib import Path
 
 from . import __version__
 from .cv import CVRegistry, CVSelection, CVService
-from .errors import JobsearchError, SchemaValidationError
+from .errors import CVFactsError, JobsearchError, SchemaValidationError
+from .forms import FormService
 from .home import (
     bootstrap_private_home,
     configure_private_home,
@@ -83,6 +84,7 @@ def _versioned_command(arguments: list[str]) -> str | None:
         "cv": {"evidence", "facts", "prepare", "build"},
         "run": {"start", "analyze", "select-cv", "checkpoint", "show"},
         "application": {"record"},
+        "form": {"plan"},
         "questions": {"match", "validate-reuse", "sync"},
     }
     for parent, children in allowed.items():
@@ -92,6 +94,64 @@ def _versioned_command(arguments: list[str]) -> str | None:
         child = arguments[index + 1] if index + 1 < len(arguments) else ""
         return f"{parent}.{child}" if child in children else parent
     return None
+
+
+def _form_facts(store: SafeStore, runs: RunStore, state: RunState, home: Path) -> dict[str, object]:
+    """Load exactly one regular run-owned CV-facts artifact bound to the selected CV."""
+
+    selected = state.data.get("selected_cv")
+    selected_name = selected.get("name") if isinstance(selected, dict) else None
+    artifacts = state.data.get("generated_artifacts")
+    pattern = re.compile(rf"^runs/{re.escape(state.run_id)}/cv-facts-([0-9a-f]{{64}})\.json$")
+    candidates = [item for item in artifacts if isinstance(item, str) and pattern.fullmatch(item)] if isinstance(artifacts, list) else []
+    if len(candidates) != 1 or not isinstance(selected_name, str):
+        raise CVFactsError("cv_facts_binding: selected CV facts are unavailable", reason_code="cv_facts_binding")
+    reference = candidates[0]
+    filename = Path(reference).name
+    path = runs.runs_dir / state.run_id / filename
+    run_directory = runs.runs_dir / state.run_id
+    try:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.resolve().parent != run_directory.resolve()
+            or not path.resolve().is_relative_to(home.resolve())
+        ):
+            raise OSError("unsafe facts artifact")
+    except OSError as error:
+        raise CVFactsError("cv_facts_binding: selected CV facts are unavailable", reason_code="cv_facts_binding") from error
+    facts = store.read_json(path, "cv-facts.v1")
+    digest = pattern.fullmatch(reference)
+    if (
+        digest is None
+        or facts.get("run_id") != state.run_id
+        or facts.get("cv_name") != selected_name
+        or facts.get("source_hash") != digest.group(1)
+    ):
+        raise CVFactsError("cv_facts_binding: selected CV facts are unavailable", reason_code="cv_facts_binding")
+    return facts
+
+
+def _form_summary(plan: dict[str, object]) -> dict[str, object]:
+    action_counts: dict[str, int] = {}
+    reason_counts: dict[str, int] = {}
+    decisions = plan.get("decisions")
+    if isinstance(decisions, list):
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                continue
+            action = decision.get("action")
+            reason = decision.get("reason_code")
+            if isinstance(action, str):
+                action_counts[action] = action_counts.get(action, 0) + 1
+            if isinstance(reason, str):
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    return {
+        "page_id": plan["page_id"],
+        "action_counts": action_counts,
+        "reason_counts": reason_counts,
+        "stop_before_submit": True,
+    }
 
 
 def _valid_run_id(run_id: str) -> bool:
@@ -157,6 +217,11 @@ def main(argv: list[str] | None = None) -> int:
     application_record.add_argument("--run-id", required=True)
     application_record.add_argument("--confirmed-submitted", action="store_true")
     application_record.add_argument("--workday-id")
+    form = commands.add_parser("form")
+    form_commands = form.add_subparsers(dest="form_command")
+    form_plan = form_commands.add_parser("plan")
+    form_plan.add_argument("--run-id", required=True)
+    form_plan.add_argument("--snapshot", required=True, type=Path)
     arguments = sys.argv[1:] if argv is None else argv
     try:
         args = parser.parse_args(arguments)
@@ -183,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         run_id = getattr(args, "run_id", None)
         requires_run_id = (
             args.command == "application"
+            or args.command == "form"
             or args.command == "cv" and args.cv_command in {"evidence", "facts", "prepare", "build"}
             or args.command == "run"
             and args.run_command != "start"
@@ -361,6 +427,44 @@ def main(argv: list[str] | None = None) -> int:
             )
             _emit(_success_envelope(command, result))
             return 0
+        if args.command == "form":
+            command = f"form.{args.form_command}"
+            if args.form_command != "plan":
+                _emit(
+                    {
+                        "schema_version": 1,
+                        "ok": False,
+                        "command": "form",
+                        "reason_code": "invalid_arguments",
+                        "warnings": [],
+                    }
+                )
+                return 2
+            home = resolve_private_home(args.home, Path.cwd(), default_config_path())
+            store = SafeStore(registry, home / "backups")
+            runs = RunStore(store, home / "runs")
+            state = runs.require_open(args.run_id)
+            profile = store.read_yaml(home / "profile.yaml", "profile.v1")
+            facts = _form_facts(store, runs, state, home)
+            snapshot = load_mapping(args.snapshot)
+            page_id = snapshot.get("page_id")
+            if not isinstance(page_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", page_id):
+                raise SchemaValidationError(
+                    "page_id_invalid: page identifier is invalid", reason_code="page_id_invalid"
+                )
+            plan = FormService(
+                registry,
+                profile=profile,
+                cv_facts=facts,
+                questions=QuestionMemory(store, home / "questions.yaml"),
+                job_context=state.data.get("job_context") if isinstance(state.data.get("job_context"), dict) else {},
+                run_id=args.run_id,
+            ).plan(snapshot)
+            store.write_json(
+                home / "runs" / args.run_id / f"fill-plan-{page_id}.json", plan, "fill-plan.v1"
+            )
+            _emit(_success_envelope(command, _form_summary(plan)))
+            return 0
         if args.command == "questions":
             command = f"questions.{args.question_command}"
             if args.question_command not in {"match", "validate-reuse", "sync"}:
@@ -483,7 +587,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return error.exit_code
         parent_command = getattr(args, "command", None)
-        if parent_command in {"run", "application"} or (
+        if parent_command in {"run", "application", "form"} or (
             parent_command == "cv"
             and getattr(args, "cv_command", None) in {"evidence", "facts", "prepare", "build"}
         ):

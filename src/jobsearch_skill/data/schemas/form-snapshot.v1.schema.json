@@ -2,6 +2,39 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/jobsearch-skill/schemas/form-snapshot.v1.schema.json",
   "title": "Semantic form snapshot v1",
+  "$defs": {
+    "question_reuse": {
+      "type": "object",
+      "properties": {
+        "canonical_source_id": {"type": "string", "minLength": 1},
+        "wording": {"type": "string", "minLength": 1},
+        "scope": {
+          "type": "object",
+          "properties": {
+            "kind": {"enum": ["global", "company", "role", "job"]},
+            "company": {"type": "string", "minLength": 1},
+            "role": {"type": "string", "minLength": 1},
+            "job_fingerprint": {"type": "string", "minLength": 1}
+          },
+          "required": ["kind"],
+          "additionalProperties": false
+        },
+        "qualifiers": {
+          "type": "object",
+          "properties": {
+            "negated": {"type": "boolean"},
+            "jurisdiction": {"type": "string", "minLength": 1},
+            "time_period": {"type": "string", "minLength": 1},
+            "unit": {"type": "string", "minLength": 1}
+          },
+          "required": ["negated"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["canonical_source_id", "wording", "scope", "qualifiers"],
+      "additionalProperties": false
+    }
+  },
   "type": "object",
   "properties": {
     "schema_version": {"const": 1},
@@ -21,6 +54,7 @@
           "answer_type": {"enum": ["boolean", "string", "selection", "multi_selection", "number", "date", "free_text"]},
           "required": {"type": "boolean"},
           "semantic_key": {"type": "string"},
+          "question_reuse": {"$ref": "#/$defs/question_reuse"},
           "options": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
           "observed_value": {"oneOf": [{"type": "boolean"}, {"type": "string"}, {"type": "number"}, {"type": "array", "items": {"type": "string"}}, {"type": "null"}]}
         },
