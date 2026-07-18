@@ -14,6 +14,7 @@ from .errors import JobsearchError, SchemaValidationError
 from .forms import FormService
 from .home import (
     bootstrap_private_home,
+    bootstrap_synthetic_home,
     configure_private_home,
     default_config_path,
     resolve_private_home,
@@ -131,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
     configure = commands.add_parser("configure")
     configure.add_argument("private_home", type=Path)
     configure.add_argument("--config", type=Path)
-    commands.add_parser("bootstrap")
+    bootstrap = commands.add_parser("bootstrap")
+    bootstrap.add_argument("--synthetic", action="store_true")
     validate = commands.add_parser("validate")
     validate.add_argument("--ready", action="store_true")
     cv = commands.add_parser("cv")
@@ -239,7 +241,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in {"bootstrap", "validate"}:
             home = resolve_private_home(args.home, Path.cwd(), default_config_path())
             if args.command == "bootstrap":
-                bootstrap_private_home(home, registry)
+                if args.synthetic:
+                    bootstrap_synthetic_home(home, registry)
+                else:
+                    bootstrap_private_home(home, registry)
                 _emit({"command": "bootstrap", "status": "ok"})
                 return 0
             missing = validate_private_documents(home, registry, ready=args.ready)

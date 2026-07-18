@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/evals/rubric.schema.json",
+  "title": "Jobsearch skill evaluation case",
+  "$defs": {
+    "behavior": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,63}$"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 500}
+      },
+      "required": ["id", "description"],
+      "additionalProperties": false
+    },
+    "allowed_input": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+        },
+        "description": {"type": "string", "minLength": 1, "maxLength": 300}
+      },
+      "required": ["path", "description"],
+      "additionalProperties": false
+    },
+    "scorecard_result": {
+      "type": "object",
+      "properties": {
+        "case_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,63}$"},
+        "passed_behavior_ids": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "failed_behavior_ids": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "forbidden_behavior_ids_present": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "synthetic_evidence": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 1000}
+      },
+      "required": [
+        "case_id",
+        "passed_behavior_ids",
+        "failed_behavior_ids",
+        "forbidden_behavior_ids_present",
+        "synthetic_evidence",
+        "rationale"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,63}$"},
+    "prompt": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "allowed_inputs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/allowed_input"},
+      "minItems": 1
+    },
+    "expected_behaviors": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/behavior"},
+      "minItems": 1
+    },
+    "forbidden_behaviors": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/behavior"},
+      "minItems": 1
+    },
+    "minimum_pass_count": {"type": "integer", "minimum": 1}
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "prompt",
+    "allowed_inputs",
+    "expected_behaviors",
+    "forbidden_behaviors",
+    "minimum_pass_count"
+  ],
+  "additionalProperties": false
+}

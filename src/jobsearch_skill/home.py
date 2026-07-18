@@ -2,13 +2,28 @@ from __future__ import annotations
 
 import os
 import stat
+import subprocess
 import tomllib
 import csv
 import json
+import tempfile
 from collections.abc import Mapping
+from importlib import resources
+from io import BytesIO
 from pathlib import Path
 
+import yaml
+from pypdf import PdfReader
+from pypdf.errors import PyPdfError
+
+from jobsearch_skill.cv_security import (
+    copy_bytes_atomic,
+    isolated_latex_environment,
+    safe_read_relative,
+    validate_tex_bytes,
+)
 from jobsearch_skill.errors import (
+    CVBuildError,
     ConfigurationError,
     SchemaValidationError,
     StorageValidationError,
@@ -70,6 +85,12 @@ _READINESS_PATHS = (
     ("legal_attestations", "background_check_consent"),
     ("legal_attestations", "non_compete_restriction"),
 )
+
+_SYNTHETIC_MARKER = ".synthetic-bootstrap.json"
+_SYNTHETIC_MARKER_TEXT = json.dumps(
+    {"schema_version": 1, "kind": "jobsearch-synthetic-home"},
+    sort_keys=True,
+) + "\n"
 
 
 def default_config_path(environ: Mapping[str, str] | None = None) -> Path:
@@ -343,6 +364,156 @@ def bootstrap_private_home(home: Path, registry: SchemaRegistry) -> list[Path]:
         applications,
         *directories,
     ]
+
+
+def _synthetic_resources() -> tuple[dict[str, object], dict[str, object], dict[str, object], str]:
+    root = resources.files("jobsearch_skill.data.synthetic")
+    documents: list[dict[str, object]] = []
+    try:
+        for filename in ("profile.yaml", "preferences.yaml", "questions.yaml"):
+            value = yaml.safe_load(root.joinpath(filename).read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("synthetic document is not an object")
+            documents.append(value)
+        tex = root.joinpath("resume.tex").read_text(encoding="utf-8")
+    except (FileNotFoundError, ModuleNotFoundError, TypeError, UnicodeError, yaml.YAMLError, ValueError) as error:
+        raise ConfigurationError(
+            "synthetic_resources: packaged synthetic resources are unavailable",
+            reason_code="synthetic_resources",
+        ) from error
+    return documents[0], documents[1], documents[2], tex
+
+
+def _verify_synthetic_pdf(pdf: bytes) -> None:
+    try:
+        reader = PdfReader(BytesIO(pdf))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except (EOFError, IndexError, KeyError, OSError, PyPdfError, TypeError, ValueError) as error:
+        raise ValueError("synthetic PDF is invalid") from error
+    if reader.is_encrypted or len(reader.pages) < 1 or "Avery Example" not in text:
+        raise ValueError("synthetic PDF verification failed")
+
+
+def _exact_text(expected: str):
+    def validate(value: str) -> None:
+        if value != expected:
+            raise ValueError("text mismatch")
+
+    return validate
+
+
+def _compile_synthetic_cv(tex: str) -> bytes:
+    """Compile and verify the packaged public CV in an isolated temporary directory."""
+
+    try:
+        validate_tex_bytes(tex.encode("utf-8"), set())
+        with tempfile.TemporaryDirectory(prefix="jobsearch-synthetic-") as name:
+            root = Path(name)
+            root.chmod(0o700)
+            source = root / "resume.tex"
+            copy_bytes_atomic(tex.encode("utf-8"), source)
+            completed = subprocess.run(
+                ["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", source.name],
+                cwd=root,
+                env=isolated_latex_environment(root),
+                shell=False,
+                check=False,
+                capture_output=True,
+                timeout=120,
+            )
+            if completed.returncode != 0:
+                raise OSError("synthetic CV compiler failed")
+            pdf = safe_read_relative(root, Path("resume.pdf"))
+            _verify_synthetic_pdf(pdf)
+            return pdf
+    except (
+        CVBuildError,
+        EOFError,
+        IndexError,
+        KeyError,
+        OSError,
+        PyPdfError,
+        subprocess.SubprocessError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise ConfigurationError(
+            "synthetic_cv_build: packaged synthetic CV could not be verified",
+            reason_code="synthetic_cv_build",
+        ) from error
+
+
+def bootstrap_synthetic_home(home: Path, registry: SchemaRegistry) -> list[Path]:
+    """Create an idempotent evaluation home from packaged public-only resources."""
+
+    resolved_home = home.expanduser().resolve()
+    marker = resolved_home / _SYNTHETIC_MARKER
+    profile_path = resolved_home / "profile.yaml"
+    profile, preferences, questions, tex = _synthetic_resources()
+    expected_documents = (
+        (profile_path, profile, "profile.v1"),
+        (resolved_home / "preferences.yaml", preferences, "preferences.v1"),
+        (resolved_home / "questions.yaml", questions, "questions.v1"),
+    )
+
+    if profile_path.exists() and not marker.exists():
+        raise ConfigurationError(
+            "synthetic_bootstrap_conflict: refusing to replace a non-synthetic profile",
+            reason_code="synthetic_bootstrap_conflict",
+        )
+
+    if marker.exists():
+        store = SafeStore(registry, resolved_home / "backups")
+        store.ensure_private_file(marker)
+        try:
+            marker_text = marker.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ConfigurationError(
+                "synthetic_bootstrap_conflict: synthetic marker is unavailable",
+                reason_code="synthetic_bootstrap_conflict",
+            ) from error
+        if marker_text != _SYNTHETIC_MARKER_TEXT:
+            raise ConfigurationError(
+                "synthetic_bootstrap_conflict: synthetic marker is invalid",
+                reason_code="synthetic_bootstrap_conflict",
+            )
+        for path, expected, contract in expected_documents:
+            if store.read_yaml(path, contract) != expected:
+                raise ConfigurationError(
+                    "synthetic_bootstrap_conflict: synthetic document was changed",
+                    reason_code="synthetic_bootstrap_conflict",
+                )
+        cv_root = resolved_home / "synthetic-cv"
+        try:
+            persisted_pdf = safe_read_relative(cv_root, Path("resume.pdf"))
+            if (
+                safe_read_relative(cv_root, Path("resume.tex")) != tex.encode("utf-8")
+                or not persisted_pdf
+            ):
+                raise OSError("synthetic CV changed")
+            _verify_synthetic_pdf(persisted_pdf)
+        except (CVBuildError, OSError, ValueError) as error:
+            raise ConfigurationError(
+                "synthetic_bootstrap_conflict: synthetic CV was changed",
+                reason_code="synthetic_bootstrap_conflict",
+            ) from error
+        return [marker, *(path for path, _, _ in expected_documents), cv_root / "resume.tex", cv_root / "resume.pdf"]
+
+    pdf = _compile_synthetic_cv(tex)
+    created = bootstrap_private_home(resolved_home, registry)
+    store = SafeStore(registry, resolved_home / "backups")
+    for path, value, contract in expected_documents:
+        store.write_yaml(path, value, contract)
+    cv_root = resolved_home / "synthetic-cv"
+    _make_private_directories(cv_root)
+    store.write_text(cv_root / "resume.tex", tex, _exact_text(tex))
+    copy_bytes_atomic(pdf, cv_root / "resume.pdf")
+    store.write_text(
+        marker,
+        _SYNTHETIC_MARKER_TEXT,
+        _exact_text(_SYNTHETIC_MARKER_TEXT),
+    )
+    return [*created, marker, cv_root / "resume.tex", cv_root / "resume.pdf"]
 
 
 def _validate_applications(path: Path, registry: SchemaRegistry) -> None:
