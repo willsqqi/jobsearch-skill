@@ -82,7 +82,15 @@ def _success_envelope(command: str, result: dict[str, object]) -> dict[str, obje
 
 def _versioned_command(arguments: list[str]) -> str | None:
     allowed = {
-        "cv": {"inspect", "candidate-facts", "evidence", "facts", "prepare", "build"},
+        "cv": {
+            "inspect",
+            "candidate-facts",
+            "evidence",
+            "facts",
+            "prepare",
+            "customize",
+            "build",
+        },
         "run": {"start", "analyze", "select-cv", "checkpoint", "show"},
         "application": {"record"},
         "form": {"plan"},
@@ -149,13 +157,18 @@ def main(argv: list[str] | None = None) -> int:
     cv_inspect.add_argument("--cv", required=True)
     cv_facts = cv_commands.add_parser("facts")
     cv_facts.add_argument("--run-id", required=True)
-    cv_facts.add_argument("--input", required=True, type=Path)
+    facts_source = cv_facts.add_mutually_exclusive_group(required=True)
+    facts_source.add_argument("--input", type=Path)
+    facts_source.add_argument("--candidate", action="store_true")
     cv_candidate_facts = cv_commands.add_parser("candidate-facts")
     cv_candidate_facts.add_argument("--run-id", required=True)
     cv_candidate_facts.add_argument("--cv", required=True)
     cv_candidate_facts.add_argument("--input", required=True, type=Path)
     cv_prepare = cv_commands.add_parser("prepare")
     cv_prepare.add_argument("--run-id", required=True)
+    cv_customize = cv_commands.add_parser("customize")
+    cv_customize.add_argument("--run-id", required=True)
+    cv_customize.add_argument("--input", required=True, type=Path)
     cv_build = cv_commands.add_parser("build")
     cv_build.add_argument("--run-id", required=True)
     questions = commands.add_parser("questions")
@@ -177,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     run_select = run_commands.add_parser("select-cv")
     run_select.add_argument("--run-id", required=True)
     run_select.add_argument("--cv", required=True)
+    run_select.add_argument("--for-customization", action="store_true")
     run_checkpoint = run_commands.add_parser("checkpoint")
     run_checkpoint.add_argument("--run-id", required=True)
     run_checkpoint.add_argument("--input", required=True, type=Path)
@@ -224,7 +238,15 @@ def main(argv: list[str] | None = None) -> int:
             or args.command == "form"
             or args.command == "cv"
             and args.cv_command
-            in {"inspect", "candidate-facts", "evidence", "facts", "prepare", "build"}
+            in {
+                "inspect",
+                "candidate-facts",
+                "evidence",
+                "facts",
+                "prepare",
+                "customize",
+                "build",
+            }
             or args.command == "run"
             and args.run_command != "start"
             and not getattr(args, "latest_open", False)
@@ -269,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                 "evidence",
                 "facts",
                 "prepare",
+                "customize",
                 "build",
             }:
                 _emit({"reason_code": "invalid_arguments", "status": "error"})
@@ -330,12 +353,18 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             selected = state.data.get("selected_cv")
             selected_name = selected.get("name") if isinstance(selected, dict) else None
+            selected_customized = (
+                selected.get("customized") is True if isinstance(selected, dict) else False
+            )
             if not isinstance(selected_name, str):
                 raise SchemaValidationError(
                     "cv_selection_mismatch: run CV selection is unavailable",
                     reason_code="cv_selection_mismatch",
                 )
-            selection = cvs.resolve(selected_name)
+            selection = cvs.resolve(
+                selected_name,
+                for_customization=selected_customized or args.cv_command == "customize",
+            )
             if args.cv_command == "evidence":
                 evidence = service.evidence(args.run_id, selection)
                 result = {
@@ -344,7 +373,13 @@ def main(argv: list[str] | None = None) -> int:
                     "status": "stored",
                 }
             elif args.cv_command == "facts":
-                facts = service.store_facts(args.run_id, selection, load_mapping(args.input))
+                facts = (
+                    service.promote_candidate_facts(args.run_id, selection)
+                    if args.candidate
+                    else service.store_facts(
+                        args.run_id, selection, load_mapping(args.input)
+                    )
+                )
                 source_hash = facts.get("source_hash")
                 facts_path = service.facts_path(args.run_id, str(source_hash))
                 result = {
@@ -361,6 +396,23 @@ def main(argv: list[str] | None = None) -> int:
                     "manifest_ref": prepared.manifest_path.relative_to(home).as_posix(),
                     "copied_count": len(copied) if isinstance(copied, list) else 0,
                     "status": str(prepared.manifest.get("status")),
+                }
+            elif args.cv_command == "customize":
+                customization = service.customize(
+                    args.run_id, selection, load_mapping(args.input)
+                )
+                current = runs.require_open(args.run_id)
+                manifest_path, manifest = service._prepared_manifest(current)
+                root = manifest_path.parent
+                result = {
+                    "customization_ref": (root / str(manifest["claim_evidence_ref"]))
+                    .relative_to(home)
+                    .as_posix(),
+                    "customized_tex_ref": (root / str(manifest["customized_tex"]))
+                    .relative_to(home)
+                    .as_posix(),
+                    "claim_count": len(customization.get("claims", [])),
+                    "status": "grounded",
                 }
             else:
                 built = service.build(args.run_id)
@@ -394,8 +446,14 @@ def main(argv: list[str] | None = None) -> int:
                 state = runs.save_analysis(args.run_id, load_mapping(args.analysis))
             elif args.run_command == "select-cv":
                 preferences = store.read_yaml(home / "preferences.yaml", "preferences.v1")
-                selection = CVRegistry(preferences, home).resolve(args.cv)
-                selected_path = selection.pdf if selection.pdf is not None else selection.tex
+                selection = CVRegistry(preferences, home).resolve(
+                    args.cv, for_customization=args.for_customization
+                )
+                selected_path = (
+                    selection.tex
+                    if args.for_customization
+                    else selection.pdf if selection.pdf is not None else selection.tex
+                )
                 if selected_path is None:
                     raise SchemaValidationError(
                         "cv_selection_invalid: selected CV has no usable file",
@@ -406,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "name": selection.name,
                         "path": str(selected_path),
-                        "customized": selection.pdf is None,
+                        "customized": bool(args.for_customization or selection.pdf is None),
                     },
                 )
             elif args.run_command == "checkpoint":
@@ -611,7 +669,15 @@ def main(argv: list[str] | None = None) -> int:
         if parent_command in {"run", "application", "form"} or (
             parent_command == "cv"
             and getattr(args, "cv_command", None)
-            in {"inspect", "candidate-facts", "evidence", "facts", "prepare", "build"}
+            in {
+                "inspect",
+                "candidate-facts",
+                "evidence",
+                "facts",
+                "prepare",
+                "customize",
+                "build",
+            }
         ):
             child = getattr(args, f"{parent_command}_command", None)
             command = f"{parent_command}.{child}" if child else parent_command

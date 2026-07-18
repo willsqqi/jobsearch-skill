@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/jobsearch-skill/schemas/cv-customization.v1.schema.json",
+  "title": "Evidence-grounded CV customization request v1",
+  "type": "object",
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "cv_name": {"type": "string", "minLength": 1},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "customized_tex": {"type": "string", "minLength": 1, "maxLength": 2000000},
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "evidence_anchors": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1, "maxLength": 2000},
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "fact_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^/(?:identity/(?:full_name|email|phone|location|links/[0-9]+)|education/[0-9]+|employment/[0-9]+|skills/[0-9]+|projects/[0-9]+)$"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": ["claim", "evidence_anchors", "fact_refs"],
+        "additionalProperties": false
+      }
+    },
+    "unsupported_requirements": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 500},
+      "uniqueItems": true
+    }
+  },
+  "required": ["schema_version", "run_id", "cv_name", "source_hash", "customized_tex", "claims", "unsupported_requirements"],
+  "additionalProperties": false
+}

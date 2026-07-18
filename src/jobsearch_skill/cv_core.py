@@ -58,7 +58,12 @@ class CVServiceBase:
 
     def _require_selected_binding(self, state: RunState, selection: CVSelection) -> None:
         selected = state.data.get("selected_cv")
-        expected = selection.pdf if selection.pdf is not None else selection.tex
+        customized = selected.get("customized") is True if isinstance(selected, Mapping) else False
+        expected = (
+            selection.tex
+            if customized
+            else selection.pdf if selection.pdf is not None else selection.tex
+        )
         if (
             not isinstance(selected, Mapping)
             or selected.get("name") != selection.name

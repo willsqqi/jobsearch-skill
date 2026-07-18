@@ -153,6 +153,31 @@ def test_candidate_facts_are_source_bound_without_selecting_a_cv(evidence_setup)
         service.store_candidate_facts(run.run_id, selection, unsupported)
 
 
+def test_selected_cv_can_promote_its_validated_candidate_facts(evidence_setup) -> None:
+    service, selection, selected_run, fixture_root = evidence_setup
+    context = selected_run.data["job_context"]
+    run = service.run_store.start(context)
+    evidence = service.candidate_evidence(run.run_id, selection)
+    candidate = service.store_candidate_facts(
+        run.run_id, selection, _facts(fixture_root, evidence)
+    )
+    service.run_store.save_analysis(
+        run.run_id, _analysis(run.run_id, str(context["job_fingerprint"]))
+    )
+    service.run_store.select_cv(
+        run.run_id,
+        {"name": selection.name, "path": str(selection.tex), "customized": True},
+    )
+
+    promoted = service.promote_candidate_facts(run.run_id, selection)
+
+    assert promoted == candidate
+    assert service.facts_for_selected_run(run.run_id, selection) == candidate
+    references = service.run_store.get(run.run_id).data["generated_artifacts"]
+    assert len([ref for ref in references if "/cv-evidence-" in f"/{ref}"]) == 1
+    assert len([ref for ref in references if "/cv-facts-" in f"/{ref}"]) == 1
+
+
 @pytest.mark.parametrize("category", ["education", "employment", "projects"])
 def test_each_claim_category_requires_a_nonempty_literal_anchor(
     evidence_setup, category: str

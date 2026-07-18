@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from jobsearch_skill.cv_build import CVBuildMixin
+from jobsearch_skill.cv_customize import CVCustomizeMixin
 from jobsearch_skill.cv_evidence import CVEvidenceMixin
 from jobsearch_skill.cv_models import (
     CVBuildResult,
@@ -14,7 +15,7 @@ from jobsearch_skill.cv_prepare import CVPrepareMixin
 from jobsearch_skill.cv_registry import CVRegistry
 
 
-class CVService(CVBuildMixin, CVPrepareMixin, CVEvidenceMixin):
+class CVService(CVCustomizeMixin, CVBuildMixin, CVPrepareMixin, CVEvidenceMixin):
     """Coordinate CV evidence, preparation, compilation, and verification."""
 
 

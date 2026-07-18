@@ -101,17 +101,13 @@ def test_synthetic_runtime_stores_unselected_candidate_facts_through_cli(
     home = tmp_path / ".jobsearch-eval"
     assert installed_jobsearch("--home", str(home), "bootstrap", "--synthetic").returncode == 0
     context_path = home / "candidate-job-context.json"
-    context_path.write_text(
-        json.dumps(
-            make_job_context(
-                job_url="https://example.invalid/jobs/candidate-facts",
-                company="Synthetic Systems",
-                role="Platform Software Engineer",
-                description="Public synthetic role.",
-            )
-        ),
-        encoding="utf-8",
+    context = make_job_context(
+        job_url="https://example.invalid/jobs/candidate-facts",
+        company="Synthetic Systems",
+        role="Platform Software Engineer",
+        description="Public synthetic role.",
     )
+    context_path.write_text(json.dumps(context), encoding="utf-8")
     started = installed_jobsearch(
         "--home", str(home), "run", "start", "--job-context", str(context_path)
     )
@@ -176,6 +172,73 @@ def test_synthetic_runtime_stores_unselected_candidate_facts_through_cli(
     assert state["phase"] == "created"
     assert state["selected_cv"] is None
     assert state["generated_artifacts"] == []
+
+    analysis_path = home / "candidate-analysis.json"
+    analysis_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "job_fingerprint": context["job_fingerprint"],
+                "role_summary": "Synthetic role",
+                "required_qualifications": [],
+                "preferred_qualifications": [],
+                "strong_matches": [],
+                "partial_matches": [],
+                "material_gaps": [],
+                "cv_comparison": [],
+                "recommended_cv": "SWE",
+                "recommendation_rationale": "Public synthetic evidence",
+                "customization": {
+                    "worthwhile": True,
+                    "rationale": "Public synthetic evidence",
+                },
+                "evidence_references": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert installed_jobsearch(
+        "--home",
+        str(home),
+        "run",
+        "analyze",
+        "--run-id",
+        run_id,
+        "--analysis",
+        str(analysis_path),
+    ).returncode == 0
+    assert installed_jobsearch(
+        "--home",
+        str(home),
+        "run",
+        "select-cv",
+        "--run-id",
+        run_id,
+        "--cv",
+        "SWE",
+        "--for-customization",
+    ).returncode == 0
+
+    promoted = installed_jobsearch(
+        "--home",
+        str(home),
+        "cv",
+        "facts",
+        "--run-id",
+        run_id,
+        "--candidate",
+    )
+
+    assert promoted.returncode == 0, promoted.stdout
+    promoted_state = json.loads(
+        installed_jobsearch(
+            "--home", str(home), "run", "show", "--run-id", run_id
+        ).stdout
+    )["result"]
+    assert promoted_state["selected_cv"]["customized"] is True
+    assert promoted_state["selected_cv"]["path"].endswith("/resume.tex")
+    assert len(promoted_state["generated_artifacts"]) == 2
 
 
 def test_candidate_cli_failures_use_versioned_value_free_envelopes(

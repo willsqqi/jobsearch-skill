@@ -165,6 +165,35 @@ class CVEvidenceMixin(CVServiceBase):
         self.store.write_json(path, candidate, "cv-facts.v1")
         return candidate
 
+    def promote_candidate_facts(
+        self, run_id: str, selection: CVSelection
+    ) -> dict[str, object]:
+        """Promote only the selected CV's validated pre-selection candidate."""
+
+        state = self.run_store.require_open(run_id)
+        self._require_selected(state, selection)
+        source_hashes, declared = self._declared_inputs(selection)
+        source_hash = self._aggregate_hash(source_hashes)
+        directory = self._candidate_directory(run_id, selection.name)
+        evidence_path = directory / f"cv-evidence-{source_hash}.json"
+        facts_path = self.candidate_facts_path(run_id, selection.name, source_hash)
+        try:
+            evidence_document = self.store.read_json(evidence_path, "cv-evidence.v1")
+            facts = self.store.read_json(facts_path, "cv-facts.v1")
+        except (OSError, SchemaValidationError, StorageError) as error:
+            raise self._facts_error("cv_facts_source_mismatch") from error
+        evidence = self._evidence_from_document(
+            evidence_path,
+            evidence_document,
+            source_hashes,
+            run_id=run_id,
+            cv_name=selection.name,
+            source_hash=source_hash,
+            expected_sources=self._sources(declared),
+        )
+        self._validated_facts(run_id, selection, evidence, facts)
+        return self.store_facts(run_id, selection, facts)
+
     def facts_for_selected_run(
         self, run_id: str, selection: CVSelection
     ) -> dict[str, object]:

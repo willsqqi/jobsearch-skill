@@ -278,6 +278,21 @@ class CVPrepareMixin(CVServiceBase):
             raise cv_build_error("cv_prepare_conflict")
         if status in {"prepared", "failed"} and output_pdf is not None:
             raise cv_build_error("cv_prepare_conflict")
+        customized_tex = manifest.get("customized_tex")
+        customized_hash = manifest.get("customized_tex_sha256")
+        claim_ref = manifest.get("claim_evidence_ref")
+        customized_values = (customized_tex, customized_hash, claim_ref)
+        if any(value is not None for value in customized_values):
+            if (
+                not isinstance(customized_tex, str)
+                or not customized_tex.startswith("customized/")
+                or Path(customized_tex).suffix != ".tex"
+                or not is_safe_ref(customized_tex)
+                or not isinstance(customized_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", customized_hash)
+                or claim_ref != "customization.json"
+            ):
+                raise cv_build_error("cv_prepare_conflict")
 
     def _verify_manifest_sources(
         self, destination: Path, manifest: Mapping[str, object]

@@ -27,6 +27,9 @@
     "copied_files": {"type": "array", "items": {"$ref": "#/$defs/source_ref"}, "minItems": 1, "uniqueItems": true},
     "expected_tex": {"anyOf": [{"$ref": "#/$defs/tex_ref"}, {"type": "null"}]},
     "expected_pdf": {"anyOf": [{"$ref": "#/$defs/pdf_ref"}, {"type": "null"}]},
+    "customized_tex": {"anyOf": [{"$ref": "#/$defs/tex_ref"}, {"type": "null"}]},
+    "customized_tex_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "claim_evidence_ref": {"anyOf": [{"$ref": "#/$defs/portable_ref"}, {"type": "null"}]},
     "status": {"enum": ["prepared", "built", "verified", "failed"]},
     "output_pdf": {"anyOf": [{"$ref": "#/$defs/pdf_ref"}, {"type": "null"}]},
     "verification": {

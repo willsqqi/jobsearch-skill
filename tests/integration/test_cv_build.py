@@ -118,7 +118,7 @@ def build_setup(tmp_path: Path):
     runs.save_analysis(run.run_id, _analysis(run.run_id, str(context["job_fingerprint"])))
     run = runs.select_cv(
         run.run_id,
-        {"name": selection.name, "path": str(pdf), "customized": True},
+        {"name": selection.name, "path": str(tex), "customized": True},
     )
     service = CVService(home, store, runs, registry)
     evidence = service.evidence(run.run_id, selection)
@@ -237,6 +237,255 @@ def test_build_creates_verified_pdf_without_mutating_original(build_setup) -> No
     manifest = service._read_manifest(prepared.manifest_path)
     assert manifest["status"] == "verified"
     assert manifest["verification"]["identity_present"] is True
+
+
+def test_customize_persists_grounded_claims_and_builds_separate_source(build_setup) -> None:
+    service, selection, run, prepared, original, original_hash = build_setup
+    assert prepared.tex is not None
+    original_prepared_hash = hashlib.sha256(prepared.tex.read_bytes()).hexdigest()
+    rewritten_claim = "Built Python API services."
+    customized_tex = prepared.tex.read_text(encoding="utf-8").replace(
+        "Built Python API services with deterministic tests and careful error handling.",
+        rewritten_claim,
+    )
+    request = {
+        "schema_version": 1,
+        "run_id": run.run_id,
+        "cv_name": selection.name,
+        "source_hash": prepared.manifest["source_hash"],
+        "customized_tex": customized_tex,
+        "claims": [
+            {
+                "claim": rewritten_claim,
+                "evidence_anchors": ["Built Python API services"],
+                "fact_refs": ["/employment/0"],
+            }
+        ],
+        "unsupported_requirements": ["Kubernetes"],
+    }
+
+    customization = service.customize(run.run_id, selection, request)
+    result = service.build(run.run_id)
+    manifest = service._read_manifest(prepared.manifest_path)
+
+    assert customization["claims"] == request["claims"]
+    assert result.verified is True
+    assert rewritten_claim in result.extracted_text
+    assert hashlib.sha256(original.read_bytes()).hexdigest() == original_hash
+    assert hashlib.sha256(prepared.tex.read_bytes()).hexdigest() == original_prepared_hash
+    customized_path = prepared.root / str(manifest["customized_tex"])
+    assert customized_path.is_file()
+    assert customized_path != prepared.tex
+    assert stat.S_IMODE(customized_path.stat().st_mode) == 0o600
+    assert manifest["customized_tex_sha256"] == hashlib.sha256(
+        customized_path.read_bytes()
+    ).hexdigest()
+    assert manifest["claim_evidence_ref"] == "customization.json"
+
+
+def test_customize_rejects_claim_without_original_evidence(build_setup) -> None:
+    service, selection, run, prepared, _, _ = build_setup
+    assert prepared.tex is not None
+    unsupported = "Operated Kubernetes clusters in production."
+    customized_tex = prepared.tex.read_text(encoding="utf-8").replace(
+        "Built Python API services with deterministic tests and careful error handling.",
+        unsupported,
+    )
+    request = {
+        "schema_version": 1,
+        "run_id": run.run_id,
+        "cv_name": selection.name,
+        "source_hash": prepared.manifest["source_hash"],
+        "customized_tex": customized_tex,
+        "claims": [
+            {
+                "claim": unsupported,
+                "evidence_anchors": ["Kubernetes"],
+                "fact_refs": ["/employment/0"],
+            }
+        ],
+        "unsupported_requirements": [],
+    }
+
+    with pytest.raises(CVBuildError) as caught:
+        service.customize(run.run_id, selection, request)
+
+    assert caught.value.reason_code == "cv_customization_anchor"
+    assert not (prepared.root / "customization.json").exists()
+    assert not (prepared.root / "customized").exists()
+
+
+@pytest.mark.parametrize(
+    "unsupported",
+    [
+        "Managed Python API services.",
+        r"Built Python API services with 99\% availability.",
+    ],
+)
+def test_build_rechecks_every_customized_line_against_persisted_claims(
+    build_setup, unsupported: str
+) -> None:
+    service, selection, run, prepared, _, _ = build_setup
+    assert prepared.tex is not None
+    rewritten_claim = "Built Python API services."
+    request = {
+        "schema_version": 1,
+        "run_id": run.run_id,
+        "cv_name": selection.name,
+        "source_hash": prepared.manifest["source_hash"],
+        "customized_tex": prepared.tex.read_text(encoding="utf-8").replace(
+            "Built Python API services with deterministic tests and careful error handling.",
+            rewritten_claim,
+        ),
+        "claims": [
+            {
+                "claim": rewritten_claim,
+                "evidence_anchors": ["Built Python API services"],
+                "fact_refs": ["/employment/0"],
+            }
+        ],
+        "unsupported_requirements": ["Kubernetes"],
+    }
+    service.customize(run.run_id, selection, request)
+    manifest = service._read_manifest(prepared.manifest_path)
+    customized_path = prepared.root / str(manifest["customized_tex"])
+    tampered = customized_path.read_text(encoding="utf-8").replace(
+        rewritten_claim, unsupported
+    )
+    customized_path.write_text(tampered, encoding="utf-8")
+    customized_path.chmod(0o600)
+    request["customized_tex"] = tampered
+    request["claims"] = [
+        {
+            "claim": unsupported,
+            "evidence_anchors": ["Built Python API services"],
+            "fact_refs": ["/employment/0"],
+        }
+    ]
+    service.store.write_json(
+        prepared.root / "customization.json", request, "cv-customization.v1"
+    )
+    manifest["customized_tex_sha256"] = hashlib.sha256(
+        tampered.encode("utf-8")
+    ).hexdigest()
+    service._atomic_manifest(prepared.manifest_path, manifest)
+
+    with pytest.raises(CVBuildError) as caught:
+        service.build(run.run_id)
+
+    assert caught.value.reason_code == "cv_customization_mismatch"
+
+
+def test_customize_requires_explicit_tex_selection_binding(build_setup) -> None:
+    service, _, _, _, _, _ = build_setup
+    selection = service.cv_registry.resolve(None, for_customization=False)
+    assert selection.pdf is not None and selection.tex is not None
+    context = make_job_context(
+        job_url="https://example.invalid/jobs/pdf-bound",
+        company="Synthetic Systems",
+        role="PDF-bound role",
+        description="Public fixture.",
+    )
+    run = service.run_store.start(context)
+    service.run_store.save_analysis(
+        run.run_id, _analysis(run.run_id, str(context["job_fingerprint"]))
+    )
+    service.run_store.select_cv(
+        run.run_id,
+        {"name": selection.name, "path": str(selection.pdf), "customized": False},
+    )
+    evidence = service.evidence(run.run_id, selection)
+    facts = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "latex-cv" / "evidence.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    facts.update(
+        {
+            "run_id": run.run_id,
+            "source_hash": evidence.source_hash,
+            "source_hashes": service._hash_entries(evidence.source_hashes),
+        }
+    )
+    service.store_facts(run.run_id, selection, facts)
+    prepared = service.prepare(run.run_id, selection)
+    assert prepared.tex is not None
+
+    with pytest.raises(CVBuildError) as caught:
+        service.customize(
+            run.run_id,
+            selection,
+            {
+                "schema_version": 1,
+                "run_id": run.run_id,
+                "cv_name": selection.name,
+                "source_hash": prepared.manifest["source_hash"],
+                "customized_tex": prepared.tex.read_text(encoding="utf-8"),
+                "claims": [],
+                "unsupported_requirements": [],
+            },
+        )
+
+    assert caught.value.reason_code == "cv_customization_source"
+
+
+def test_customize_recovers_orphan_files_and_failed_request(build_setup) -> None:
+    service, selection, run, prepared, _, _ = build_setup
+    assert prepared.tex is not None
+    invalid_tex = prepared.tex.read_text(encoding="utf-8").replace("\\end{document}", "")
+    first = {
+        "schema_version": 1,
+        "run_id": run.run_id,
+        "cv_name": selection.name,
+        "source_hash": prepared.manifest["source_hash"],
+        "customized_tex": invalid_tex,
+        "claims": [],
+        "unsupported_requirements": [],
+    }
+    orphan = prepared.root / "customized" / str(prepared.manifest["expected_tex"])
+    orphan.parent.mkdir(mode=0o700)
+    orphan.write_text("interrupted write", encoding="utf-8")
+    orphan.chmod(0o600)
+
+    service.customize(run.run_id, selection, first)
+    with pytest.raises(CVBuildError):
+        service.build(run.run_id)
+    assert service._read_manifest(prepared.manifest_path)["status"] == "failed"
+
+    corrected = dict(first)
+    corrected["customized_tex"] = prepared.tex.read_text(encoding="utf-8")
+    service.customize(run.run_id, selection, corrected)
+    manifest = service._read_manifest(prepared.manifest_path)
+
+    assert manifest["status"] == "prepared"
+    assert manifest["customized_tex_sha256"] == hashlib.sha256(
+        corrected["customized_tex"].encode("utf-8")
+    ).hexdigest()
+    assert service.build(run.run_id).verified is True
+
+
+def test_customize_repairs_missing_manifest_binding(build_setup) -> None:
+    service, selection, run, prepared, _, _ = build_setup
+    assert prepared.tex is not None
+    request = {
+        "schema_version": 1,
+        "run_id": run.run_id,
+        "cv_name": selection.name,
+        "source_hash": prepared.manifest["source_hash"],
+        "customized_tex": prepared.tex.read_text(encoding="utf-8"),
+        "claims": [],
+        "unsupported_requirements": [],
+    }
+    service.customize(run.run_id, selection, request)
+    manifest = service._read_manifest(prepared.manifest_path)
+    for key in ("customized_tex", "customized_tex_sha256", "claim_evidence_ref"):
+        manifest.pop(key)
+    service._atomic_manifest(prepared.manifest_path, manifest)
+
+    assert service.customize(run.run_id, selection, request) == request
+    repaired = service._read_manifest(prepared.manifest_path)
+    assert repaired["customized_tex"] == "customized/resume.tex"
+    assert repaired["claim_evidence_ref"] == "customization.json"
 
 
 def test_build_preserves_same_stem_declared_pdf_and_uses_separate_output(
@@ -1029,13 +1278,58 @@ def test_cli_cv_commands_emit_value_free_versioned_envelopes(
     assert prepare_payload["command"] == "cv.prepare"
     assert set(prepare_payload["result"]) == {"copied_count", "manifest_ref", "status"}
 
+    assert prepared.tex is not None
+    rewritten_claim = "Built Python API services."
+    request = {
+        "schema_version": 1,
+        "run_id": run.run_id,
+        "cv_name": prepared.selection.name,
+        "source_hash": prepared.manifest["source_hash"],
+        "customized_tex": prepared.tex.read_text(encoding="utf-8").replace(
+            "Built Python API services with deterministic tests and careful error handling.",
+            rewritten_claim,
+        ),
+        "claims": [
+            {
+                "claim": rewritten_claim,
+                "evidence_anchors": ["Built Python API services"],
+                "fact_refs": ["/employment/0"],
+            }
+        ],
+        "unsupported_requirements": ["Kubernetes"],
+    }
+    request_path = home / "runs" / run.run_id / "customization-input.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    request_path.chmod(0o600)
+    assert main(
+        [
+            "--home",
+            str(home),
+            "cv",
+            "customize",
+            "--run-id",
+            run.run_id,
+            "--input",
+            str(request_path),
+        ]
+    ) == 0
+    customize_payload = json.loads(capsys.readouterr().out)
+    assert customize_payload["command"] == "cv.customize"
+    assert set(customize_payload["result"]) == {
+        "claim_count",
+        "customization_ref",
+        "customized_tex_ref",
+        "status",
+    }
+
     assert main(["--home", str(home), "cv", "build", "--run-id", run.run_id]) == 0
     build_payload = json.loads(capsys.readouterr().out)
     assert build_payload["command"] == "cv.build"
     assert set(build_payload["result"]) == {"page_count", "pdf_ref", "status", "verified"}
 
     combined = json.dumps(
-        [evidence_payload, facts_payload, prepare_payload, build_payload], sort_keys=True
+        [evidence_payload, facts_payload, prepare_payload, customize_payload, build_payload],
+        sort_keys=True,
     )
     assert "Avery Example" not in combined
     assert "avery@example.invalid" not in combined

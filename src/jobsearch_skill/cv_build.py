@@ -46,6 +46,7 @@ _REASON_STAGES = {
     "cv_build_timeout": "compiler",
     "cv_build_tool_error": "compiler",
     "cv_build_tool_missing": "compiler",
+    "cv_customization_mismatch": "preflight",
     "cv_evidence_mismatch": "preflight",
     "cv_evidence_missing": "preflight",
     "cv_facts_mismatch": "preflight",
@@ -210,6 +211,19 @@ class CVBuildMixin(CVServiceBase):
         )
         if not isinstance(expected_identity, str) or not expected_identity:
             self._raise_build_failure(manifest_path, manifest, "cv_identity_missing")
+        compile_source = tex
+        if any(
+            manifest.get(key) is not None
+            for key in ("customized_tex", "customized_tex_sha256", "claim_evidence_ref")
+        ):
+            try:
+                compile_source = self._customized_source(
+                    manifest_path, manifest, evidence, facts
+                )
+            except CVBuildError:
+                self._raise_build_failure(
+                    manifest_path, manifest, "cv_customization_mismatch"
+                )
         output = self._expected_output_path(root, expected_tex)
         self._require_beneath(output, self.generated_root)
         if already_verified:
@@ -250,7 +264,7 @@ class CVBuildMixin(CVServiceBase):
                     workspace = Path(workspace_name)
                     try:
                         compile_tex = self._stage_compiler_workspace(
-                            root, workspace, manifest, expected_tex
+                            root, workspace, manifest, expected_tex, compile_source
                         )
                     except CVBuildError:
                         self._raise_build_failure(
@@ -356,6 +370,7 @@ class CVBuildMixin(CVServiceBase):
         workspace: Path,
         manifest: Mapping[str, object],
         expected_tex: str,
+        compile_source: Path,
     ) -> Path:
         self._require_beneath(workspace, root)
         try:
@@ -380,6 +395,12 @@ class CVBuildMixin(CVServiceBase):
             self._ensure_directory(target.parent, root=workspace)
             copy_bytes_atomic(data, target)
         compile_tex = workspace / expected_tex
+        original_tex = root / "source" / expected_tex
+        if compile_source != original_tex:
+            customized = safe_read_relative(
+                compile_source.parent, Path(compile_source.name)
+            )
+            copy_bytes_atomic(customized, compile_tex)
         self._require_regular_generated(compile_tex)
         return compile_tex
 

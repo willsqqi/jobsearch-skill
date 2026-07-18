@@ -20,6 +20,7 @@ CONTRACTS = (
     "cv-evidence.v1",
     "cv-facts.v1",
     "cv-manifest.v1",
+    "cv-customization.v1",
     "form-snapshot.v1",
     "fill-plan.v1",
     "reviewed-answers.v1",

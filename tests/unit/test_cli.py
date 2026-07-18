@@ -10,6 +10,7 @@ from jobsearch_skill.cli import main
 from jobsearch_skill.errors import StorageError
 from jobsearch_skill.storage import SafeStore
 from jobsearch_skill.jobs import make_job_context
+from jobsearch_skill.runs import RunStore
 from jobsearch_skill.schema import SchemaRegistry
 
 
@@ -415,6 +416,60 @@ def test_cli_run_lifecycle_emits_versioned_envelopes_and_owned_analysis(
     assert shown["result"]["phase"] == "cv_ready"
 
 
+def test_cli_select_cv_for_customization_binds_registered_tex(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    home = tmp_path / ".jobsearch"
+    assert main(["--home", str(home), "bootstrap"]) == 0
+    capsys.readouterr()
+    cv_root = home / "cvs" / "swe"
+    cv_root.mkdir(parents=True)
+    (cv_root / "resume.tex").write_text("\\documentclass{article}", encoding="utf-8")
+    (cv_root / "resume.pdf").write_bytes(b"%PDF-1.4 synthetic")
+    preferences = yaml.safe_load((home / "preferences.yaml").read_text(encoding="utf-8"))
+    preferences["default_cv"] = "SWE"
+    preferences["cvs"] = [
+        {
+            "name": "SWE",
+            "root": "cvs/swe",
+            "tex": "resume.tex",
+            "pdf": "resume.pdf",
+            "assets": [],
+        }
+    ]
+    _write_yaml(home / "preferences.yaml", preferences)
+    context = make_job_context(
+        job_url="https://example.invalid/jobs/customize",
+        company="Synthetic Systems",
+        role="Platform Engineer",
+        description="Build APIs",
+    )
+    runs = RunStore(SafeStore(SchemaRegistry(), home / "backups"), home / "runs")
+    run = runs.start(context)
+    runs.save_analysis(
+        run.run_id, _analysis_document(run.run_id, str(context["job_fingerprint"]))
+    )
+
+    assert main(
+        [
+            "--home",
+            str(home),
+            "run",
+            "select-cv",
+            "--run-id",
+            run.run_id,
+            "--cv",
+            "SWE",
+            "--for-customization",
+        ]
+    ) == 0
+    selected = json.loads(capsys.readouterr().out)["result"]["selected_cv"]
+
+    assert selected["name"] == "SWE"
+    assert selected["customized"] is True
+    assert selected["path"].endswith("/cvs/swe/resume.tex")
+
+
 def test_cli_application_requires_confirmation_without_mutation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -427,8 +482,6 @@ def test_cli_application_requires_confirmation_without_mutation(
     )
     registry = SchemaRegistry()
     store = SafeStore(registry, home / "backups")
-    from jobsearch_skill.runs import RunStore
-
     runs = RunStore(store, home / "runs")
     run = runs.start(context)
     runs.save_analysis(run.run_id, _analysis_document(run.run_id, str(context["job_fingerprint"])))
