@@ -11,7 +11,13 @@ from jobsearch_skill.questions import QuestionMemory, QuestionMemoryError, norma
 from jobsearch_skill.schema import SchemaRegistry
 
 
-_CV_KEY = re.compile(r"^(identity\.(?:full_name|email|phone|location)|(education|employment)\.(0|[1-9][0-9]*)\.(institution|company|degree|field_of_study|title|location|start_date|end_date|highlights))$")
+_CV_IDENTITY_KEY = re.compile(r"^identity\.(?:full_name|email|phone|location)$")
+_EDUCATION_KEY = re.compile(
+    r"^education\.(0|[1-9][0-9]*)\.(?:institution|degree|field_of_study|location|start_date|end_date)$"
+)
+_EMPLOYMENT_KEY = re.compile(
+    r"^employment\.(0|[1-9][0-9]*)\.(?:company|title|location|start_date|end_date|highlights)$"
+)
 _SELECTION_TYPES = {"selection", "multi_selection"}
 
 
@@ -46,6 +52,8 @@ def _selection_value(
         if not isinstance(option, str):
             return False, None
         key = normalize_question(option)
+        if not key:
+            return False, None
         normalized.setdefault(key, []).append(option)
     if any(len(matches) != 1 for matches in normalized.values()):
         return False, None
@@ -146,12 +154,13 @@ class FormService:
         return self._fill_or_unresolved(field, value, {"kind": "profile", "ref": key}, "direct")
 
     def _cv_decision(self, field: Mapping[str, object], key: str) -> dict[str, object] | None:
-        match = _CV_KEY.fullmatch(key)
-        if match is None:
+        identity_match = _CV_IDENTITY_KEY.fullmatch(key)
+        history_match = _EDUCATION_KEY.fullmatch(key) or _EMPLOYMENT_KEY.fullmatch(key)
+        if identity_match is None and history_match is None:
             return None
         parts = key.split(".")
         value: object
-        if parts[0] == "identity":
+        if identity_match is not None:
             identity = self.cv_facts.get("identity")
             item = identity.get(parts[1]) if isinstance(identity, Mapping) else None
             value = item.get("value") if isinstance(item, Mapping) else None
@@ -163,6 +172,21 @@ class FormService:
         if value is None:
             return _unresolved(field, "missing_cv_value")
         return self._fill_or_unresolved(field, value, {"kind": "cv", "ref": key}, "direct")
+
+    def _scope_matches_job(self, scope: Mapping[str, object]) -> bool:
+        kind = scope.get("kind")
+        expected_keys = {
+            "global": {"kind"},
+            "company": {"kind", "company"},
+            "role": {"kind", "role"},
+            "job": {"kind", "job_fingerprint"},
+        }
+        if kind not in expected_keys or set(scope) != expected_keys[kind]:
+            return False
+        if kind == "global":
+            return True
+        key = next(iter(expected_keys[kind] - {"kind"}))
+        return isinstance(scope.get(key), str) and scope.get(key) == self.job_context.get(key)
 
     def _question_decision(
         self, field: Mapping[str, object], descriptor: Mapping[str, object]
@@ -179,10 +203,14 @@ class FormService:
                     "qualifiers": descriptor["qualifiers"],
                 }
             )
+            if not self._scope_matches_job(query.scope):
+                return _unresolved(field, "question_scope_mismatch")
             matched = self.questions.match(query)
             if matched.kind == "ambiguous":
                 return _unresolved(field, matched.reason_code)
-            if matched.canonical_id is not None and matched.canonical_id != canonical_id:
+            if matched.kind == "unseen":
+                return _unresolved(field, matched.reason_code)
+            if matched.canonical_id != canonical_id:
                 return _unresolved(field, "canonical_source_mismatch")
             candidate = self.questions.get(canonical_id)
         except (KeyError, QuestionMemoryError, SchemaValidationError) as error:
@@ -196,7 +224,7 @@ class FormService:
             return _unresolved(field, validation.reason_code)
         answer = candidate.get("answer")
         value = answer.get("value") if isinstance(answer, Mapping) else None
-        match_kind = matched.kind if matched.kind in {"exact", "alias"} else "semantic"
+        match_kind = matched.kind
         return self._fill_or_unresolved(
             field,
             value,
@@ -214,10 +242,22 @@ class FormService:
         *,
         canonical_source_id: str | None = None,
     ) -> dict[str, object]:
+        options = field["options"]
+        if (
+            not isinstance(options, Sequence)
+            or isinstance(options, (str, bytes))
+            or any(
+                not isinstance(option, str)
+                or not option.strip()
+                or not normalize_question(option)
+                for option in options
+            )
+        ):
+            return _unresolved(field, "value_not_in_options")
         if not _matches_answer_type(value, field["answer_type"]):
             return _unresolved(field, "answer_type_mismatch")
         selected, observed = _selection_value(
-            value, field["options"], field["answer_type"], field["control_type"]
+            value, options, field["answer_type"], field["control_type"]
         )
         if not selected:
             return _unresolved(field, "value_not_in_options")

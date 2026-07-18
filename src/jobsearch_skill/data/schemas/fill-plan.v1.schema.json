@@ -5,14 +5,14 @@
   "type": "object",
   "properties": {
     "schema_version": {"const": 1},
-    "run_id": {"type": "string"},
-    "page_id": {"type": "string"},
+    "run_id": {"type": "string", "minLength": 1},
+    "page_id": {"type": "string", "minLength": 1},
     "decisions": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "field_id": {"type": "string"},
+          "field_id": {"type": "string", "minLength": 1},
           "action": {"enum": ["fill", "ask", "leave_empty", "manual_upload", "manual_submit"]},
           "value": {"oneOf": [{"type": "boolean"}, {"type": "string"}, {"type": "number"}, {"type": "array", "items": {"type": "string"}}]},
           "source": {
@@ -22,14 +22,14 @@
             "additionalProperties": false
           },
           "match_kind": {"enum": ["direct", "exact", "alias", "semantic", "unseen"]},
-          "canonical_source_id": {"type": "string"},
-          "reason_code": {"type": "string"},
+          "canonical_source_id": {"type": "string", "minLength": 1},
+          "reason_code": {"type": "string", "minLength": 1},
           "review_required": {"type": "boolean"}
         },
         "required": ["field_id", "action"],
         "allOf": [
-          {"if": {"properties": {"action": {"const": "fill"}}}, "then": {"required": ["value", "source"]}},
-          {"if": {"properties": {"action": {"enum": ["ask", "leave_empty", "manual_upload", "manual_submit"]}}}, "then": {"not": {"required": ["value"]}}}
+          {"if": {"properties": {"action": {"const": "fill"}}}, "then": {"required": ["value", "source", "match_kind", "review_required"]}},
+          {"if": {"properties": {"action": {"enum": ["ask", "leave_empty", "manual_upload", "manual_submit"]}}}, "then": {"not": {"anyOf": [{"required": ["value"]}, {"required": ["source"]}, {"required": ["match_kind"]}, {"required": ["canonical_source_id"]}, {"required": ["review_required"]}]}}}
         ],
         "additionalProperties": false
       }

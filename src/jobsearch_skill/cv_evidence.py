@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from io import BytesIO
 from pathlib import Path
@@ -12,7 +13,7 @@ from pypdf.errors import PyPdfError
 
 from jobsearch_skill.cv_core import CVServiceBase, now
 from jobsearch_skill.cv_models import CVEvidence, CVSelection
-from jobsearch_skill.errors import CVBuildError, CVFactsError, SchemaValidationError
+from jobsearch_skill.errors import CVBuildError, CVFactsError, SchemaValidationError, StorageError
 
 
 class CVEvidenceMixin(CVServiceBase):
@@ -119,6 +120,79 @@ class CVEvidenceMixin(CVServiceBase):
             {"target_phase": state.phase, "generated_artifacts": [reference]},
         )
         return candidate
+
+    def facts_for_selected_run(
+        self, run_id: str, selection: CVSelection
+    ) -> dict[str, object]:
+        """Read only facts and evidence still bound to the current selected CV bytes."""
+
+        state = self.run_store.require_open(run_id)
+        self._require_selected_binding(state, selection)
+        source_hashes, declared = self._declared_inputs(selection)
+        source_hash = self._aggregate_hash(source_hashes)
+        facts_path = self.run_store.runs_dir / run_id / f"cv-facts-{source_hash}.json"
+        evidence_path = self.run_store.runs_dir / run_id / f"cv-evidence-{source_hash}.json"
+        facts_ref = facts_path.relative_to(self.home).as_posix()
+        evidence_ref = evidence_path.relative_to(self.home).as_posix()
+        references = state.data.get("generated_artifacts")
+        fact_refs = (
+            [reference for reference in references if isinstance(reference, str) and reference.startswith(f"runs/{run_id}/cv-facts-")]
+            if isinstance(references, Sequence)
+            else []
+        )
+        evidence_refs = (
+            [reference for reference in references if isinstance(reference, str) and reference.startswith(f"runs/{run_id}/cv-evidence-")]
+            if isinstance(references, Sequence)
+            else []
+        )
+        if fact_refs != [facts_ref] or evidence_refs != [evidence_ref]:
+            raise self._facts_error("cv_facts_source_mismatch")
+        for path in (facts_path, evidence_path):
+            try:
+                info = path.stat(follow_symlinks=False)
+                if path.is_symlink() or not stat.S_ISREG(info.st_mode):
+                    raise OSError
+            except OSError as error:
+                raise self._facts_error("cv_facts_source_mismatch") from error
+        try:
+            facts = self.store.read_json(facts_path, "cv-facts.v1")
+            evidence_document = self.store.read_json(evidence_path, "cv-evidence.v1")
+        except (StorageError, SchemaValidationError) as error:
+            raise self._facts_error("cv_facts_source_mismatch") from error
+        expected_entries = self._hash_entries(source_hashes)
+        if (
+            facts.get("run_id") != run_id
+            or facts.get("cv_name") != selection.name
+            or facts.get("source_hash") != source_hash
+            or facts.get("source_hashes") != expected_entries
+        ):
+            raise self._facts_error("cv_facts_source_mismatch")
+        expected_sources: list[dict[str, str]] = []
+        for snapshot in declared:
+            reference = snapshot.relative.as_posix()
+            if snapshot.kind == "tex":
+                expected_sources.append(
+                    {"source_ref": reference, "kind": "tex", "text": snapshot.data.decode("utf-8")}
+                )
+            elif snapshot.kind == "pdf":
+                expected_sources.append(
+                    {"source_ref": reference, "kind": "pdf", "text": self._pdf_text(snapshot.data)}
+                )
+        try:
+            evidence = self._evidence_from_document(
+                evidence_path,
+                evidence_document,
+                source_hashes,
+                run_id=run_id,
+                cv_name=selection.name,
+                source_hash=source_hash,
+                expected_sources=expected_sources,
+            )
+        except CVBuildError as error:
+            raise self._facts_error("cv_facts_source_mismatch") from error
+        if any(not anchor or anchor not in evidence.extracted_text for anchor in self._evidence_anchors(facts)):
+            raise self._facts_error("cv_facts_source_mismatch")
+        return facts
 
     def facts_path(self, run_id: str, source_hash: str) -> Path:
         if not re.fullmatch(r"[0-9a-f]{64}", source_hash):

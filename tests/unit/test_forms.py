@@ -7,6 +7,7 @@ import pytest
 
 from jobsearch_skill.forms import FormService
 from jobsearch_skill.questions import QuestionMemory
+from jobsearch_skill.errors import SchemaValidationError
 from jobsearch_skill.schema import SchemaRegistry
 from jobsearch_skill.storage import SafeStore
 
@@ -77,7 +78,11 @@ def form_service(tmp_path: Path) -> FormService:
         profile=profile,
         cv_facts=facts,
         questions=QuestionMemory(store, questions_path),
-        job_context={},
+        job_context={
+            "company": "Synthetic Company",
+            "role": "Synthetic Role",
+            "job_fingerprint": "sha256:" + "c" * 64,
+        },
         run_id="run_synthetic",
     )
 
@@ -191,6 +196,18 @@ def test_boolean_radio_requires_an_explicit_observed_value_not_a_guess(
     }
 
 
+def test_blank_observed_option_is_a_value_free_per_field_ask(form_service: FormService) -> None:
+    plan = form_service.plan(
+        _snapshot(_field("name", "identity.full_name", options=["   "]))
+    )
+
+    assert _decision(plan, "name") == {
+        "field_id": "name",
+        "action": "ask",
+        "reason_code": "value_not_in_options",
+    }
+
+
 def test_repeated_cv_history_keeps_exact_indexed_provenance(form_service: FormService) -> None:
     plan = form_service.plan(
         _snapshot(
@@ -206,6 +223,138 @@ def test_repeated_cv_history_keeps_exact_indexed_provenance(form_service: FormSe
         "ref": "education.0.institution",
     }
     assert _decision(plan, "history-employment-0-title")["value"] == "Software Engineering Intern"
+
+
+@pytest.mark.parametrize("semantic_key", ["education.0.title", "employment.0.degree"])
+def test_cross_section_cv_keys_are_not_resolved(form_service: FormService, semantic_key: str) -> None:
+    plan = form_service.plan(_snapshot(_field("cross-section", semantic_key)))
+
+    assert _decision(plan, "cross-section") == {
+        "field_id": "cross-section",
+        "action": "ask",
+        "reason_code": "unknown_semantic_key",
+    }
+
+
+def _learn_question(
+    form_service: FormService,
+    *,
+    wording: str,
+    value: str = "Yes",
+    scope: dict[str, object] | None = None,
+) -> str:
+    result = form_service.questions.sync(
+        {
+            "schema_version": 1,
+            "run_id": "run_synthetic",
+            "page_id": "synthetic-page",
+            "entries": [
+                {
+                    "wording": wording,
+                    "value": value,
+                    "answer_type": "selection",
+                    "scope": scope or {"kind": "global"},
+                    "qualifiers": {"negated": False},
+                    "topic_tags": [],
+                    "role_tags": [],
+                    "source": "user",
+                    "canonical_source_id": None,
+                    "reviewed_at": "2026-07-17T00:00:00Z",
+                }
+            ],
+        }
+    )
+    return result.entries[0].canonical_id
+
+
+def test_unseen_wording_cannot_reuse_an_explicit_canonical_id(form_service: FormService) -> None:
+    canonical_id = _learn_question(form_service, wording="Are you authorized?")
+    plan = form_service.plan(
+        _snapshot(
+            _field(
+                "unseen-question",
+                control_type="select",
+                answer_type="selection",
+                options=["Yes", "No"],
+                question_reuse={
+                    "canonical_source_id": canonical_id,
+                    "wording": "Do you require sponsorship?",
+                    "scope": {"kind": "global"},
+                    "qualifiers": {"negated": False},
+                },
+            )
+        )
+    )
+
+    assert _decision(plan, "unseen-question") == {
+        "field_id": "unseen-question",
+        "action": "ask",
+        "reason_code": "question_unseen",
+    }
+
+
+def test_question_scope_must_match_the_current_job_context(form_service: FormService) -> None:
+    scope = {"kind": "company", "company": "Other Company"}
+    canonical_id = _learn_question(form_service, wording="Question for company?", scope=scope)
+    plan = form_service.plan(
+        _snapshot(
+            _field(
+                "wrong-company",
+                control_type="select",
+                answer_type="selection",
+                options=["Yes", "No"],
+                question_reuse={
+                    "canonical_source_id": canonical_id,
+                    "wording": "Question for company?",
+                    "scope": scope,
+                    "qualifiers": {"negated": False},
+                },
+            )
+        )
+    )
+
+    assert _decision(plan, "wrong-company") == {
+        "field_id": "wrong-company",
+        "action": "ask",
+        "reason_code": "question_scope_mismatch",
+    }
+
+
+def test_fill_plan_rejects_provenance_on_a_non_fill_action() -> None:
+    with pytest.raises(SchemaValidationError):
+        SchemaRegistry().validate(
+            "fill-plan.v1",
+            {
+                "schema_version": 1,
+                "run_id": "run_synthetic",
+                "page_id": "synthetic",
+                "decisions": [
+                    {
+                        "field_id": "private",
+                        "action": "ask",
+                        "source": {"kind": "profile", "ref": "identity.full_name"},
+                    }
+                ],
+                "stop_before_submit": True,
+            },
+        )
+
+
+def test_snapshot_rejects_a_global_question_scope_with_company_data() -> None:
+    snapshot = _snapshot(
+        _field(
+            "invalid-scope",
+            question_reuse={
+                "canonical_source_id": "q_synthetic",
+                "wording": "Question?",
+                "scope": {"kind": "global", "company": "Private Company"},
+                "qualifiers": {"negated": False},
+            },
+        )
+    )
+
+    with pytest.raises(SchemaValidationError):
+        SchemaRegistry().validate("form-snapshot.v1", snapshot)
 
 
 def test_duplicate_field_ids_are_rejected_before_a_plan(form_service: FormService) -> None:
@@ -230,3 +379,11 @@ def test_mock_workday_inventories_are_schema_valid_and_cover_each_page() -> None
     registry = SchemaRegistry()
     for snapshot in snapshots:
         registry.validate("form-snapshot.v1", snapshot)
+    education = next(snapshot for snapshot in snapshots if snapshot["page_id"] == "education-employment")
+    assert {field["field_id"] for field in education["fields"]} >= {
+        "education-0-school", "education-1-school", "employment-0-company", "employment-1-company"
+    }
+    questions = next(snapshot for snapshot in snapshots if snapshot["page_id"] == "application-questions")
+    known = next(field for field in questions["fields"] if field["field_id"] == "known-question")
+    assert known["answer_type"] == "selection"
+    assert known["options"] == ["Yes", "No"]

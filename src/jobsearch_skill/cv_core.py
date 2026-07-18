@@ -56,12 +56,11 @@ class CVServiceBase:
             raise cv_build_error("cv_path_unsafe")
         self._ensure_directory(self.generated_root)
 
-    def _require_selected(self, state: RunState, selection: CVSelection) -> None:
+    def _require_selected_binding(self, state: RunState, selection: CVSelection) -> None:
         selected = state.data.get("selected_cv")
         expected = selection.pdf if selection.pdf is not None else selection.tex
         if (
-            state.phase != "cv_selected"
-            or not isinstance(selected, Mapping)
+            not isinstance(selected, Mapping)
             or selected.get("name") != selection.name
             or expected is None
             or not isinstance(selected.get("path"), str)
@@ -73,6 +72,11 @@ class CVServiceBase:
             raise cv_build_error("cv_selection_mismatch") from error
         if selected_path != expected.resolve():
             raise cv_build_error("cv_selection_mismatch")
+
+    def _require_selected(self, state: RunState, selection: CVSelection) -> None:
+        if state.phase != "cv_selected":
+            raise cv_build_error("cv_selection_mismatch")
+        self._require_selected_binding(state, selection)
 
     def _declared_inputs(
         self, selection: CVSelection

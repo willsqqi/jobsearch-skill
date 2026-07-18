@@ -21,8 +21,12 @@
     "fields": [
       {"field_id": "education-0-school", "label": "School", "context": "Education 1", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "education.0.institution", "options": []},
       {"field_id": "education-0-start", "label": "Start date", "context": "Education 1", "control_type": "date", "answer_type": "date", "required": true, "semantic_key": "education.0.start_date", "options": []},
+      {"field_id": "education-1-school", "label": "School", "context": "Education 2", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "education.1.institution", "options": []},
+      {"field_id": "education-1-start", "label": "Start date", "context": "Education 2", "control_type": "date", "answer_type": "date", "required": true, "semantic_key": "education.1.start_date", "options": []},
       {"field_id": "employment-0-company", "label": "Company", "context": "Employment 1", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.0.company", "options": []},
-      {"field_id": "employment-0-title", "label": "Job title", "context": "Employment 1", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.0.title", "options": []}
+      {"field_id": "employment-0-title", "label": "Job title", "context": "Employment 1", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.0.title", "options": []},
+      {"field_id": "employment-1-company", "label": "Company", "context": "Employment 2", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.1.company", "options": []},
+      {"field_id": "employment-1-title", "label": "Job title", "context": "Employment 2", "control_type": "text", "answer_type": "string", "required": true, "semantic_key": "employment.1.title", "options": []}
     ]
   },
   {
@@ -32,7 +36,7 @@
     "page_id": "application-questions",
     "url": "https://example.invalid/workday/application-questions",
     "fields": [
-      {"field_id": "known-question", "label": "Are you authorized to work?", "context": "Application question", "control_type": "radio", "answer_type": "boolean", "required": true, "options": ["Yes", "No"], "question_reuse": {"canonical_source_id": "q_synthetic_authorized", "wording": "Are you authorized to work?", "scope": {"kind": "global"}, "qualifiers": {"negated": false}}},
+      {"field_id": "known-question", "label": "Are you authorized to work?", "context": "Application question", "control_type": "radio", "answer_type": "selection", "required": true, "options": ["Yes", "No"], "question_reuse": {"canonical_source_id": "q_synthetic_authorized", "wording": "Are you authorized to work?", "scope": {"kind": "global"}, "qualifiers": {"negated": false}}},
       {"field_id": "unseen-question", "label": "Tell us something new", "context": "Application question", "control_type": "textarea", "answer_type": "free_text", "required": true, "options": []}
     ]
   },

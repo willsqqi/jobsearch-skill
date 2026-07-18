@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import __version__
 from .cv import CVRegistry, CVSelection, CVService
-from .errors import CVFactsError, JobsearchError, SchemaValidationError
+from .errors import JobsearchError, SchemaValidationError
 from .forms import FormService
 from .home import (
     bootstrap_private_home,
@@ -94,42 +94,6 @@ def _versioned_command(arguments: list[str]) -> str | None:
         child = arguments[index + 1] if index + 1 < len(arguments) else ""
         return f"{parent}.{child}" if child in children else parent
     return None
-
-
-def _form_facts(store: SafeStore, runs: RunStore, state: RunState, home: Path) -> dict[str, object]:
-    """Load exactly one regular run-owned CV-facts artifact bound to the selected CV."""
-
-    selected = state.data.get("selected_cv")
-    selected_name = selected.get("name") if isinstance(selected, dict) else None
-    artifacts = state.data.get("generated_artifacts")
-    pattern = re.compile(rf"^runs/{re.escape(state.run_id)}/cv-facts-([0-9a-f]{{64}})\.json$")
-    candidates = [item for item in artifacts if isinstance(item, str) and pattern.fullmatch(item)] if isinstance(artifacts, list) else []
-    if len(candidates) != 1 or not isinstance(selected_name, str):
-        raise CVFactsError("cv_facts_binding: selected CV facts are unavailable", reason_code="cv_facts_binding")
-    reference = candidates[0]
-    filename = Path(reference).name
-    path = runs.runs_dir / state.run_id / filename
-    run_directory = runs.runs_dir / state.run_id
-    try:
-        if (
-            path.is_symlink()
-            or not path.is_file()
-            or path.resolve().parent != run_directory.resolve()
-            or not path.resolve().is_relative_to(home.resolve())
-        ):
-            raise OSError("unsafe facts artifact")
-    except OSError as error:
-        raise CVFactsError("cv_facts_binding: selected CV facts are unavailable", reason_code="cv_facts_binding") from error
-    facts = store.read_json(path, "cv-facts.v1")
-    digest = pattern.fullmatch(reference)
-    if (
-        digest is None
-        or facts.get("run_id") != state.run_id
-        or facts.get("cv_name") != selected_name
-        or facts.get("source_hash") != digest.group(1)
-    ):
-        raise CVFactsError("cv_facts_binding: selected CV facts are unavailable", reason_code="cv_facts_binding")
-    return facts
 
 
 def _form_summary(plan: dict[str, object]) -> dict[str, object]:
@@ -445,7 +409,15 @@ def main(argv: list[str] | None = None) -> int:
             runs = RunStore(store, home / "runs")
             state = runs.require_open(args.run_id)
             profile = store.read_yaml(home / "profile.yaml", "profile.v1")
-            facts = _form_facts(store, runs, state, home)
+            preferences = store.read_yaml(home / "preferences.yaml", "preferences.v1")
+            selected = state.data.get("selected_cv")
+            selected_name = selected.get("name") if isinstance(selected, dict) else None
+            selection = CVRegistry(preferences, home).resolve(
+                selected_name if isinstance(selected_name, str) else None
+            )
+            facts = CVService(home, store, runs, CVRegistry(preferences, home)).facts_for_selected_run(
+                args.run_id, selection
+            )
             snapshot = load_mapping(args.snapshot)
             page_id = snapshot.get("page_id")
             if not isinstance(page_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", page_id):
