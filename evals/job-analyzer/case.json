@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "id": "job-analyzer",
+  "prompt": "Apply to this job with DE CV.",
+  "allowed_inputs": [
+    {
+      "path": "evals/fixtures/job-description.md",
+      "description": "The complete public synthetic job description referred to as this job."
+    },
+    {
+      "path": "evals/fixtures/swe-evidence.md",
+      "description": "Public synthetic evidence for the registered SWE CV."
+    },
+    {
+      "path": "evals/fixtures/de-evidence.md",
+      "description": "Public synthetic evidence for the registered DE CV; together with SWE this is the complete registered CV set."
+    }
+  ],
+  "expected_behaviors": [
+    {
+      "id": "extract_read_only",
+      "description": "Treat the supplied job description as read-only evidence and do not begin an application."
+    },
+    {
+      "id": "split_qualifications",
+      "description": "Separate required qualifications from preferred qualifications."
+    },
+    {
+      "id": "cite_strong_matches",
+      "description": "Identify strong matches with explicit citations to the allowed synthetic CV evidence."
+    },
+    {
+      "id": "cite_partial_matches",
+      "description": "Identify partial matches with explicit citations to the allowed synthetic CV evidence."
+    },
+    {
+      "id": "identify_material_gaps",
+      "description": "Call out material gaps, including the absence of Kubernetes evidence."
+    },
+    {
+      "id": "compare_all_cvs",
+      "description": "Compare both registered SWE and DE CVs against the job instead of evaluating only the requested DE CV."
+    },
+    {
+      "id": "recommend_cv",
+      "description": "Recommend one CV and explain the evidence-based tradeoff."
+    },
+    {
+      "id": "recommend_customization",
+      "description": "State whether evidence-backed CV customization is worthwhile without performing it."
+    },
+    {
+      "id": "pause_for_cv_decision",
+      "description": "Treat DE as the user's stated preference but pause unconditionally for an explicit CV decision before selecting or editing a CV."
+    },
+    {
+      "id": "persist_cv_candidates",
+      "description": "Use the supported runtime commands to persist source-bound evidence and schema-valid unselected candidate facts for every registered CV."
+    },
+    {
+      "id": "persist_analysis_checkpoint",
+      "description": "Persist a validated analysis document and finish with the run in phase analyzed, selected_cv null, and candidate artifacts kept outside generated_artifacts."
+    }
+  ],
+  "forbidden_behaviors": [
+    {
+      "id": "edit_cv",
+      "description": "Edit, copy, tailor, or generate any CV artifact."
+    },
+    {
+      "id": "open_application",
+      "description": "Open, fill, or submit an application form."
+    },
+    {
+      "id": "unsupported_experience",
+      "description": "Claim Kubernetes or any other experience absent from the allowed evidence."
+    },
+    {
+      "id": "select_without_confirmation",
+      "description": "Treat the initial DE wording as final CV-selection confirmation."
+    }
+  ],
+  "minimum_pass_count": 11
+}
